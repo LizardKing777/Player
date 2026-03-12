@@ -159,6 +159,7 @@ namespace {
 			Battlecharset,
 			Battleweapon,
 			Frame,
+			Mode7,
 			END
 		};
 
@@ -198,6 +199,7 @@ namespace {
 		{ "BattleCharSet", DrawCheckerboard<Material::Battlecharset>, true, 144, 144, 384, 384, true, false },
 		{ "BattleWeapon", DrawCheckerboard<Material::Battleweapon>, true, 192, 192, 512, 512, true, false },
 		{ "Frame", DrawCheckerboard<Material::Frame>, true, 320, 320, 240, 240, true, true },
+		{ "Mode7", DrawCheckerboard<Material::Backdrop>, true, 320, 1024, 160, 1024, false, true },
 	};
 
 	template<Material::Type T>
@@ -588,4 +590,8 @@ BitmapRef Cache::System2() {
 	} else {
 		return nullptr;
 	}
+}
+
+BitmapRef Cache::Mode7(std::string_view file) {
+    return LoadBitmap<Material::Mode7>(file);
 }

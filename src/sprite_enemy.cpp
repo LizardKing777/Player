@@ -90,14 +90,23 @@ void Sprite_Enemy::OnMonsterSpriteReady(FileRequestResult* result) {
 
 void Sprite_Enemy::Draw(Bitmap& dst) {
 
-	auto alpha = 255;
-	auto zoom = 1.0;
+
 
 	auto* enemy = static_cast<Game_Enemy*>(GetBattler());
+    double zoom = static_cast<double>(enemy->GetCustomZoom());
 
 	const auto bt = enemy->GetBlinkTimer();
 	const auto dt = enemy->GetDeathTimer();
 	const auto et = enemy->GetExplodeTimer();
+
+    auto* battler = GetBattler();
+
+    if (battler->IsHidden() || battler->IsProxyHidden()) {
+        return;
+    }
+    int alpha = enemy->GetCustomOpacity();
+
+    SetAngle(enemy->GetCustomAngle() * (M_PI / 180.0));
 
 	if (!enemy->Exists() && dt == 0 && et == 0) {
 		return;
@@ -111,7 +120,7 @@ void Sprite_Enemy::Draw(Bitmap& dst) {
 		alpha = 7 * dt;
 	} else if (et > 0) {
 		alpha = 12 * et;
-		zoom = static_cast<double>(20 - et) / 20.0 + 1.0;
+        zoom *= (static_cast<double>(20 - et) / 20.0 + 1.0);
 	}
 
 	if (enemy->IsTransparent()) {

@@ -15,6 +15,7 @@
  * along with EasyRPG Player. If not, see <http://www.gnu.org/licenses/>.
  */
 
+#define CUTE_C2_IMPLEMENTATION
 // Headers
 #include "audio.h"
 #include "game_character.h"
@@ -36,10 +37,28 @@
 #include <limits>
 #include <unordered_set>
 
+#include "cute_c2.h"
+
+#include <lcf/data.h>
+#include <lcf/rpg/terrain.h>
+#include <lcf/reader_util.h>
+#include "tilemap.h"
+#include "tilemap_layer.h"
+
+
+
 Game_Character::Game_Character(Type type, lcf::rpg::SaveMapEventBase* d) :
 	_type(type), _data(d)
 {
 }
+
+float Game_Character::GetRealX() const {
+	return real_x;
+}
+
+float Game_Character::GetRealY() const {
+	return real_y;
+}// Game_Character::~Game_Character() {}
 
 void Game_Character::SanitizeData(std::string_view name) {
 	SanitizeMoveRoute(name, data()->move_route, data()->move_route_index, "move_route_index");
@@ -54,12 +73,25 @@ void Game_Character::SanitizeMoveRoute(std::string_view name, const lcf::rpg::Mo
 }
 
 void Game_Character::MoveTo(int map_id, int x, int y) {
+//  if (true) {
+    if (Player::game_config.allow_pixel_movement.Get()){            // TODO - PIXELMOVE
+		is_moving_toward_target = false;
+		real_x = (float)x;
+		real_y = (float)y;
+		//Output::Warning("Char Pos = {}x{}", real_x, real_y);
+	}// END - PIXELMOVE
+
 	data()->map_id = map_id;
 	// RPG_RT does not round the position for this function.
 	SetX(x);
 	SetY(y);
 	SetRemainingStep(0);
 }
+
+// int Game_Character::GetYOffset() const {
+// 	return GetJumpHeight();
+// }
+
 
 int Game_Character::GetJumpHeight() const {
 	if (IsJumping()) {
@@ -70,6 +102,20 @@ int Game_Character::GetJumpHeight() const {
 }
 
 int Game_Character::GetScreenX() const {
+	if (Player::game_config.allow_pixel_movement.Get()) {
+		float val = real_x * TILE_SIZE - floor((float)Game_Map::GetDisplayX() / (float)TILE_SIZE) + TILE_SIZE / 2.0f;
+
+		// Wraps the screen coordinate if the map loops.
+		// This keeps the sprite visible when its world coordinate is wrapped (e.g. 0.1 vs 19.9).
+		// The Mode7 renderer handles the "ghosting" logic separately using a radius check.
+		if (Game_Map::LoopHorizontal()) {
+			val = Utils::PositiveModulo(static_cast<int>(val), Game_Map::GetTilesX() * TILE_SIZE);
+		}
+
+		return floor(val);
+	}
+
+	// Legacy tile-based logic
 	int x = GetSpriteX() / TILE_SIZE - Game_Map::GetDisplayX() / TILE_SIZE + TILE_SIZE;
 
 	if (Game_Map::LoopHorizontal()) {
@@ -81,6 +127,22 @@ int Game_Character::GetScreenX() const {
 }
 
 int Game_Character::GetScreenY(bool apply_jump) const {
+	if (Player::game_config.allow_pixel_movement.Get()) {
+		float val = real_y * TILE_SIZE - floor((float)Game_Map::GetDisplayY() / (float)TILE_SIZE) + TILE_SIZE;
+
+		if (apply_jump) {
+			val -= GetJumpHeight();
+		}
+
+		// Wraps the screen coordinate if the map loops.
+		if (Game_Map::LoopVertical()) {
+			val = Utils::PositiveModulo(static_cast<int>(val), Game_Map::GetTilesY() * TILE_SIZE);
+		}
+
+		return floor(val);
+	}
+
+	// Legacy tile-based logic
 	int y = GetSpriteY() / TILE_SIZE - Game_Map::GetDisplayY() / TILE_SIZE + TILE_SIZE;
 
 	if (apply_jump) {
@@ -90,7 +152,6 @@ int Game_Character::GetScreenY(bool apply_jump) const {
 	if (Game_Map::LoopVertical()) {
 		y = Utils::PositiveModulo(y, Game_Map::GetTilesY() * TILE_SIZE);
 	}
-
 	return y;
 }
 
@@ -130,6 +191,13 @@ void Game_Character::Update() {
 	}
 	SetProcessed(true);
 
+
+//	if (true) {
+    if (Player::game_config.allow_pixel_movement.Get()){        // TODO - PIXELMOVE
+		UpdateMoveTowardTarget();
+	} // END - PIXELMOVE
+
+
 	if (IsStopping()) {
 		this->UpdateNextMovementAction();
 	}
@@ -153,10 +221,37 @@ void Game_Character::Update() {
 }
 
 void Game_Character::UpdateMovement(int amount) {
+
+	// --- START: Pixel Movement Jump Interpolation Fix ---
+	// If a jump is in progress and pixel movement is active, we need to manually
+	// interpolate the real_x and real_y coordinates from the start to the end point.
+	if (IsJumping() && Player::game_config.allow_pixel_movement.Get()) {
+		// total_duration is the number of "steps" a jump takes, which is always SCREEN_TILE_SIZE
+		const int total_duration = SCREEN_TILE_SIZE;
+		// elapsed is how many steps have passed since the jump started
+		int elapsed = total_duration - GetRemainingStep();
+		// progress is a float from 0.0 to 1.0 representing jump completion
+		float progress = static_cast<float>(elapsed) / static_cast<float>(total_duration);
+
+		// Linearly interpolate the real coordinates based on the jump's progress
+        real_x = jump_start_real_x + (jump_end_real_x - jump_start_real_x) * progress;
+		real_y = jump_start_real_y + (jump_end_real_y - jump_start_real_y) * progress;
+	}
+	// --- END: Pixel Movement Jump Interpolation Fix ---
+
 	SetRemainingStep(GetRemainingStep() - amount);
 	if (GetRemainingStep() <= 0) {
 		SetRemainingStep(0);
+        bool was_jumping = IsJumping();
 		SetJumping(false);
+
+    if (was_jumping && Player::game_config.allow_pixel_movement.Get()) {
+            real_x = jump_end_real_x;
+			real_y = jump_end_real_y;
+			SetX(static_cast<int>(round(real_x)));
+			SetY(static_cast<int>(round(real_y)));
+    }
+
 
 		auto& move_route = GetMoveRoute();
 		if (IsMoveRouteOverwritten() && GetMoveRouteIndex() >= static_cast<int>(move_route.move_commands.size())) {
@@ -219,6 +314,13 @@ void Game_Character::UpdateFlash() {
 }
 
 void Game_Character::UpdateMoveRoute(int32_t& current_index, const lcf::rpg::MoveRoute& current_route, bool is_overwrite) {
+
+    if (true && is_moving_toward_target && !current_route.skippable) { // TODO - PIXELMOVE
+		return;
+	} // END - PIXELMOVE
+
+
+
 	if (current_route.move_commands.empty()) {
 		return;
 	}
@@ -291,7 +393,47 @@ void Game_Character::UpdateMoveRoute(int32_t& current_index, const lcf::rpg::Mov
 				default:
 					break;
 			}
+			/*
 			Move(GetDirection());
+            */
+
+
+//			if (true && (cmd >= Code::move_towards_hero && cmd <= Code::move_away_from_hero)) { // TODO - PIXELMOVE
+            if (Player::game_config.allow_pixel_movement.Get() && (cmd >= Code::move_towards_hero && cmd <= Code::move_away_from_hero)) {
+				int flag = (1 - (cmd == Code::move_away_from_hero) * 2);
+				float vx = (Main_Data::game_player->real_x - real_x) * flag;
+				float vy = (Main_Data::game_player->real_y - real_y) * flag;
+				float length = sqrt(vx * vx + vy * vy);
+				float step_size = GetStepSize();
+				MoveVector(step_size * (vx / length), step_size * (vy / length));
+			}
+//			else if (true) {
+            else if (Player::game_config.allow_pixel_movement.Get()){        // TODO - PIXELMOVE
+				float vx = (float)GetDxFromDirection(GetDirection());
+				float vy = (float)GetDyFromDirection(GetDirection());
+				c2v target;
+				if (forced_skip) {
+					forced_skip = false;
+					target = c2V(round(target_x + vx), round(target_y + vy));
+				}
+				else {
+					target = c2V(round(real_x + vx), round(real_y + vy));
+				}
+				SetMoveTowardTarget(target, current_route.skippable);
+				UpdateMoveTowardTarget();
+				if (!current_route.skippable) {
+					SetMaxStopCountForStep();
+					++current_index;
+					return;
+				}
+			}
+			else {
+				Move(GetDirection());
+			} // END - PIXELMOV
+
+
+            static const int move_speed[] = { 16, 8, 6, 4, 3, 2 };
+			doomWait = move_speed[GetMoveSpeed() - 1];
 
 			if (IsStopping()) {
 				// Move failed
@@ -350,6 +492,11 @@ void Game_Character::UpdateMoveRoute(int32_t& current_index, const lcf::rpg::Mov
 			SetFacing(GetDirection());
 			SetMaxStopCountForTurn();
 			SetStopCount(0);
+
+			static const int turn_speed[] = { 64, 32, 24, 16, 12, 8 };
+			doomWait = turn_speed[GetMoveSpeed() - 1];
+
+
 		} else {
 			switch (cmd) {
 				case Code::wait:
@@ -476,8 +623,317 @@ bool Game_Character::CheckWay(
 		ignore_all_events, ignore_some_events_by_id);
 }
 
+void Game_Character::SetMoveTowardTarget(c2v position, bool skippable) {
+	SetMoveTowardTarget(position.x, position.y, skippable);
+}
+
+void Game_Character::SetMoveTowardTarget(float x, float y, bool skippable) {
+	is_moving_toward_target = true;
+	is_move_toward_target_skippable = skippable;
+	target_x = x;
+	target_y = y;
+	move_direction = c2Norm(c2V(target_x - real_x, target_y - real_y));
+}
+
+bool Game_Character::UpdateMoveTowardTarget() {
+	if (!is_moving_toward_target || IsPaused()) {
+		return false;
+	}
+	//forced_skip       = false;
+	bool move_success = false;
+	c2v vector = c2V(target_x - real_x, target_y - real_y);
+	float length = c2Len(vector);
+	c2v vectorNorm = c2Div(vector, length);
+	float step_size = GetStepSize();
+	if (length > step_size) {
+		move_success = MoveVector(c2Mulvs(vectorNorm, step_size));
+	}
+	else {
+		move_success = MoveVector(vector);
+		is_moving_toward_target = false;
+	}
+	if (!move_success) {
+		if (is_move_toward_target_skippable) {
+			is_moving_toward_target = false;
+		}
+		else if (c2Dot(vectorNorm, move_direction) <= 0) {
+			is_moving_toward_target = false;
+			forced_skip = true;
+		}
+	}
+	return move_success;
+}
+
+bool Game_Character::MoveVector(c2v vector) {
+	return MoveVector(vector.x, vector.y);
+}
+
+bool Game_Character::MoveVector(float vx, float vy) {  // TODO - PIXELMOVE
+//	if (abs(vx) <= Epsilon && abs(vy) <= Epsilon) {
+//		return false;
+//	}
+
+    auto& player = Main_Data::game_player;
+    auto player_x = player->GetX();
+    auto player_y = player->GetY();
+
+
+    bool vehicle = Main_Data::game_player->InVehicle();
+    bool airship = Main_Data::game_player->InAirship();
+    bool flying = Main_Data::game_player->IsFlying();
+    bool boarding = Main_Data::game_player->IsBoardingOrUnboarding();
+    bool isAboard = Main_Data::game_player->IsAboard();
+    bool ascending = Game_Map::GetVehicle(Game_Vehicle::Airship)->IsAscending();
+    bool descending = Game_Map::GetVehicle(Game_Vehicle::Airship)->IsDescending();
+    bool airshipUse = Game_Map::GetVehicle(Game_Vehicle::Airship)->IsInUse();
+
+	auto boatFront = Game_Map::GetVehicle(Game_Vehicle::Boat)->GetDirection();
+	auto playerFront = Main_Data::game_player->GetDirection();
+    auto airshipFront    = Game_Map::GetVehicle(Game_Vehicle::Airship)->GetDirection();
+
+    auto MapID = Main_Data::game_player->GetMapId();
+
+    if (boarding || ascending || IsJumping() || descending)           // this is to try and stop events from going to NaNland.
+    {
+        return false;
+    }
+	UpdateFacing();
+	SetRemainingStep(1); //little hack to make the character step anim
+	float last_x = real_x;
+	float last_y = real_y;
+	real_x += vx;
+	real_y += vy;
+	if (GetThrough()) {
+		return true;
+	}
+	c2Circle self;
+	c2Circle other;
+	c2Circle hero;
+	self.p = c2V(real_x + 0.5, real_y + 0.5);
+	self.r = 0.5;
+   	other.r = 0.5;
+	c2AABB tile;
+
+	c2Manifold manifold;
+
+	/*
+	c2Poly poly;
+	poly.count = 4;
+	poly.verts[0] = c2V(0, 0);
+	poly.verts[1] = c2V(1, 0);
+	poly.verts[2] = c2V(1, 1);
+	poly.verts[3] = c2V(0, 1);
+	c2MakePoly(&poly);
+	c2x transform = c2xIdentity();
+	//
+	c2Poly poly;
+	poly.count = 3;
+	poly.verts[0] = c2V(0, 1);
+	poly.verts[1] = c2V(1, 0);
+	poly.verts[2] = c2V(1, 1);
+	c2MakePoly(&poly);
+	c2x transform = c2xIdentity();
+	transform.p = c2V(14, 16);
+	c2CircletoPolyManifold(self, &poly, &transform, &manifold);
+	if (manifold.count > 0) {
+		self.p.x -= manifold.n.x * manifold.depths[0];
+		self.p.y -= manifold.n.y * manifold.depths[0];
+	}
+	transform.p = c2V(15, 15);
+	c2CircletoPolyManifold(self, &poly, &transform, &manifold);
+	if (manifold.count > 0) {
+		self.p.x -= manifold.n.x * manifold.depths[0];
+		self.p.y -= manifold.n.y * manifold.depths[0];
+	}
+	transform.p = c2V(16, 14);
+	c2CircletoPolyManifold(self, &poly, &transform, &manifold);
+	if (manifold.count > 0) {
+		self.p.x -= manifold.n.x * manifold.depths[0];
+		self.p.y -= manifold.n.y * manifold.depths[0];
+	}
+	*/
+
+	//Test Collision With Events
+	for (auto& ev : Game_Map::GetEvents()) {
+		if (!Game_Map::WouldCollideWithCharacter(*this, ev, false)) {
+			continue;
+		}
+		other.p.x = ev.real_x + 0.5;
+		other.p.y = ev.real_y + 0.5;
+		c2CircletoCircleManifold(self, other, &manifold);
+		if (manifold.count > 0) {
+			self.p.x -= manifold.n.x * manifold.depths[0];
+			self.p.y -= manifold.n.y * manifold.depths[0];
+		}
+	}
+	//Test Collision With Player
+
+    if (Game_Map::WouldCollideWithCharacter(*this, *Main_Data::game_player, false) && !Main_Data::game_player->IsFlying()) {
+        other.p.x = player->real_x + 0.5;
+		other.p.y = player->real_y + 0.5;
+		c2CircletoCircleManifold(self, other, &manifold);
+		if (manifold.count > 0) {
+			self.p.x -= manifold.n.x * manifold.depths[0];
+			self.p.y -= manifold.n.y * manifold.depths[0];
+// Now, check if this collision should trigger an event.
+			// This only applies if 'this' character is an event bumping into the player.
+			if (GetType() == Game_Character::Event) {
+				Game_Event* self_as_event = static_cast<Game_Event*>(this);
+
+				// Check for "Event Touch" on the "Same as Hero" layer
+				if (self_as_event->GetTrigger() == lcf::rpg::EventPage::Trigger_collision &&
+					self_as_event->GetLayer() == lcf::rpg::EventPage::Layers_same &&
+					!Game_Map::GetInterpreter().IsRunning())
+				{
+					// Collision is confirmed, trigger the event!
+					self_as_event->ScheduleForegroundExecution(false, true);
+				}
+			}
+		}
+	}
+//Test Collision With Map - Map collision has high priority, so it is tested last
+
+	// MODIFIED: Airships that are flying should ignore map collision entirely.
+	if (IsFlying()) {
+		real_x = self.p.x - 0.5f;
+		real_y = self.p.y - 0.5f;
+
+	if (Game_Map::LoopHorizontal()) {
+		const float map_width_f = static_cast<float>(Game_Map::GetTilesX());
+		// Use fmod to wrap the coordinate into the [-map_width, map_width] range
+		real_x = fmod(real_x, map_width_f);
+		// If the result is negative, add map_width to bring it into the [0, map_width] range
+		if (real_x < 0.0f) {
+			real_x += map_width_f;
+		}
+	}
+
+    else if (this == Main_Data::game_player.get()) {
+            // If not looping, clamp to map bounds (0 to Width - 1)
+            float map_width_f = static_cast<float>(Game_Map::GetTilesX());
+            if (real_x < 0.0f) real_x = 0.0f;
+            if (real_x > map_width_f - 1.0f) real_x = map_width_f - 1.0f;
+        }
+
+	if (Game_Map::LoopVertical()) {
+		const float map_height_f = static_cast<float>(Game_Map::GetTilesY());
+		real_y = fmod(real_y, map_height_f);
+		if (real_y < 0.0f) {
+			real_y += map_height_f;
+		}
+	}
+    else if (this == Main_Data::game_player.get()) {
+            // If not looping, clamp to map bounds (0 to Height - 1)
+            float map_height_f = static_cast<float>(Game_Map::GetTilesY());
+            if (real_y < 0.0f) real_y = 0.0f;
+            if (real_y > map_height_f - 1.0f) real_y = map_height_f - 1.0f;
+        }
+
+		SetX(round(real_x));
+		SetY(round(real_y));
+
+		// Check for landing possibility with decision key
+		if (Input::IsTriggered(Input::DECISION) && GetType() == Game_Character::Player) {
+			Game_Map::GetVehicle(Game_Vehicle::Airship)->StartDescent();
+		}
+
+		return true; // Skip all further map collision checks
+	}
+
+	int map_width = Game_Map::GetTilesX();
+	int map_height = Game_Map::GetTilesY();
+
+    // Clamp the player's position to the map boundaries on non-looping maps.
+    // This check applies to the player directly and when in a vehicle.
+    if (Player::game_config.allow_pixel_movement.Get() && this == Main_Data::game_player.get()) {
+        if (!Game_Map::LoopHorizontal()) {
+            float map_width_f = static_cast<float>(Game_Map::GetTilesX());
+            // Clamp the center of the character so its edges (radius 0.5) don't go past the map boundary.
+            self.p.x = std::max(0.5f, std::min(self.p.x, map_width_f - 0.5f));
+        }
+
+        if (!Game_Map::LoopVertical()) {
+            float map_height_f = static_cast<float>(Game_Map::GetTilesY());
+            self.p.y = std::max(0.5f, std::min(self.p.y, map_height_f - 0.5f));
+        }
+    }
+
+	int left = floor(self.p.x - 0.5f);
+	int right = floor((self.p.x - 0.5f) + 1.0f);
+	int top = floor(self.p.y - 0.5f);
+	int bottom = floor((self.p.y - 0.5f) + 1.0f);
+
+	for (int y = top; y <= bottom; y++) {
+		for (int x = left; x <= right; x++) {
+			int tile_x = x;
+			int tile_y = y;
+
+			if (Game_Map::LoopHorizontal()) {
+				tile_x = (tile_x % map_width + map_width) % map_width;
+			}
+			if (Game_Map::LoopVertical()) {
+				tile_y = (tile_y % map_height + map_height) % map_height;
+			}
+
+			// MODIFIED: Use IsPassableTile, which already contains all the logic for
+			// different vehicles. We check passability from all cardinal directions (0x0F)
+			// as a proxy for "can this character be on this tile at all?".
+			if (!Game_Map::IsPassableTile(&(*this), 0x0F, tile_x, tile_y)) {
+				c2AABB tile_aabb;
+				tile_aabb.min = c2V(x, y);
+				tile_aabb.max = c2V(x + 1, y + 1);
+				c2CircletoAABBManifold(self, tile_aabb, &manifold);
+				if (manifold.count > 0) {
+					// Simplified collision resolution
+					self.p.x -= manifold.n.x * manifold.depths[0];
+					self.p.y -= manifold.n.y * manifold.depths[0];
+				}
+			}
+		}
+	}
+
+
+	real_x = self.p.x - 0.5f;
+	real_y = self.p.y - 0.5f;
+
+	if (Game_Map::LoopHorizontal()) {
+		const float map_width_f = static_cast<float>(Game_Map::GetTilesX());
+		// Use fmod to wrap the coordinate into the [-map_width, map_width] range
+		real_x = fmod(real_x, map_width_f);
+		// If the result is negative, add map_width to bring it into the [0, map_width] range
+		if (real_x < 0.0f) {
+			real_x += map_width_f;
+		}
+	}
+
+	if (Game_Map::LoopVertical()) {
+		const float map_height_f = static_cast<float>(Game_Map::GetTilesY());
+		real_y = fmod(real_y, map_height_f);
+		if (real_y < 0.0f) {
+			real_y += map_height_f;
+		}
+	}
+
+	SetX(round(real_x));
+	SetY(round(real_y));
+
+	if (abs(real_x - last_x) <= Epsilon && abs(real_y - last_y) <= Epsilon) {
+		SetRemainingStep(0);
+		return false; // If there is no expressive change, treat as no movement.
+	}
+
+	return true;
+}
 
 bool Game_Character::Move(int dir) {
+//    	if (true) {
+        if (Player::game_config.allow_pixel_movement.Get()){// TODO - PIXELMOVE
+		SetDirection(dir);
+		c2v vector = c2V(GetDxFromDirection(dir), GetDyFromDirection(dir));
+		float step_size = GetStepSize();
+		return MoveVector(c2Mulvs(c2Norm(vector), step_size));
+	}
+
 	if (!IsStopping()) {
 		return true;
 	}
@@ -654,10 +1110,16 @@ bool Game_Character::BeginMoveRouteJump(int32_t& current_index, const lcf::rpg::
 		}
 
 		if (cmd == Code::end_jump) {
-			int new_x = GetX() + jdx;
-			int new_y = GetY() + jdy;
-
-			auto rc = Jump(new_x, new_y);
+        bool rc;
+            if (Player::game_config.allow_pixel_movement.Get()) {
+                float new_x = GetRealX() + jdx;
+                float new_y = GetRealY() + jdy;
+                rc = Jump(new_x, new_y);
+            } else {
+                int new_x = GetX() + jdx;
+                int new_y = GetY() + jdy;
+                rc = Jump(new_x, new_y);
+            }
 			if (rc) {
 				SetMaxStopCountForStep();
 			}
@@ -673,7 +1135,71 @@ bool Game_Character::BeginMoveRouteJump(int32_t& current_index, const lcf::rpg::
 	return true;
 }
 
+// --- START: New Pixel-Perfect Jump Function ---
+bool Game_Character::Jump(float x, float y) {
+	if (!IsStopping()) {
+		return true;
+	}
+
+	// Store the precise floating-point start and end coordinates
+	jump_start_real_x = GetRealX();
+	jump_start_real_y = GetRealY();
+	jump_end_real_x = x;
+	jump_end_real_y = y;
+
+	// For compatibility, also store the tile-based start/end points
+	auto begin_x = GetX();
+	auto begin_y = GetY();
+	const auto final_tile_x = static_cast<int>(round(x));
+	const auto final_tile_y = static_cast<int>(round(y));
+	const auto dx = final_tile_x - begin_x;
+	const auto dy = final_tile_y - begin_y;
+
+	// Determine facing direction based on jump vector
+	if (std::abs(dy) >= std::abs(dx)) {
+		SetDirection(dy >= 0 ? Down : Up);
+	} else {
+		SetDirection(dx >= 0 ? Right : Left);
+	}
+
+	SetJumping(true);
+
+	if (dx != 0 || dy != 0) {
+		if (!IsFacingLocked()) {
+			SetFacing(GetDirection());
+		}
+
+		// Pathfinding still uses the tile grid. A pixel jump is only
+		// allowed if the underlying tile path is clear.
+		if (!MakeWay(begin_x, begin_y, final_tile_x, final_tile_y)) {
+			SetJumping(false);
+			return false; // Jump failed, path is blocked
+		}
+	}
+
+	// Update the integer tile coordinates to the final destination tile
+	SetBeginJumpX(begin_x);
+	SetBeginJumpY(begin_y);
+	SetX(final_tile_x);
+	SetY(final_tile_y);
+
+	SetRemainingStep(SCREEN_TILE_SIZE);
+
+	return true;
+}
+// --- END: New Pixel-Perfect Jump Function ---
+
 bool Game_Character::Jump(int x, int y) {
+
+
+     if (Player::game_config.allow_pixel_movement.Get()) {
+        // If pixel movement is on, call the new float-based version
+        return Jump(static_cast<float>(x), static_cast<float>(y));
+    }
+
+//   		real_x = (float)x;
+//		real_y = (float)y;
+
 	if (!IsStopping()) {
 		return true;
 	}
@@ -724,15 +1250,84 @@ bool Game_Character::Jump(int x, int y) {
 
 	SetBeginJumpX(begin_x);
 	SetBeginJumpY(begin_y);
+
+    if (Player::game_config.allow_pixel_movement.Get()) {
+        real_x = static_cast<float>(begin_x);
+        real_y = static_cast<float>(begin_y);
+    }
+
 	SetX(x);
 	SetY(y);
+
+//  SetX(real_x);
+//  SetY(real_y);
 	SetJumping(true);
 	SetRemainingStep(SCREEN_TILE_SIZE);
+
+ /*     if (true) { // TODO - PIXELMOVE
+
+
+
+//      SetDirection(GetDirection());
+        c2v vector = c2V(GetDxFromDirection(GetDirection()), GetDyFromDirection(GetDirection()));
+//      c2v vector = c2V(real_x - begin_x, real_y - begin_y);
+		float length = c2Len(vector);
+        c2v vectorNorm = c2Div(vector, length);
+        float step_size = GetStepSize();
+//      MoveVector(c2Mulvs(vectorNorm, step_size));
+  		MoveVector(c2Mulvs(c2Norm(vectorNorm), step_size));
+//      SetRemainingStep(0);
+}
+*/
+
+/* Reference material
+    c2v vector = c2V(GetDxFromDirection(GetDirection()), GetDyFromDirection(GetDirection()));
+	c2v vector = c2V(target_x - real_x, target_y - real_y);
+	float length = c2Len(vector);
+	c2v vectorNorm = c2Div(vector, length);
+	float step_size = GetStepSize();
+	if (length > step_size) {
+		move_success = MoveVector(c2Mulvs(vectorNorm, step_size));
+	}
+	else {
+		move_success = MoveVector(vector);
+		is_moving_toward_target = false;
+	}
+	if (!move_success) {
+		if (is_move_toward_target_skippable) {
+			is_moving_toward_target = false;
+		}
+		else if (c2Dot(vectorNorm, move_direction) <= 0) {
+			is_moving_toward_target = false;
+			forced_skip = true;
+		}
+	}
+
+*/
+
 
 	return true;
 }
 
 int Game_Character::GetDistanceXfromCharacter(const Game_Character& target) const {
+
+// 	if (true) {
+    if (Player::game_config.allow_pixel_movement.Get()){        // TODO - PIXELMOVE
+
+		float sx = real_x - Main_Data::game_player->real_x;
+
+		if (Game_Map::LoopHorizontal()) {
+			if (std::abs(sx) > Game_Map::GetTilesX() / 2) {
+				if (sx > 0)
+					sx -= Game_Map::GetTilesX();
+				else
+					sx += Game_Map::GetTilesX();
+			}
+		}
+		return round(sx * SCREEN_TILE_SIZE);
+	} //END - PIXELMOVE
+
+
 	int sx = GetX() - target.GetX();
 	if (Game_Map::LoopHorizontal()) {
 		if (std::abs(sx) > Game_Map::GetTilesX() / 2) {
@@ -746,6 +1341,24 @@ int Game_Character::GetDistanceXfromCharacter(const Game_Character& target) cons
 }
 
 int Game_Character::GetDistanceYfromCharacter(const Game_Character& target) const {
+
+// 	if (true) {
+    if (Player::game_config.allow_pixel_movement.Get()){        // TODO - PIXELMOVE
+		float sy = real_y - Main_Data::game_player->real_y;
+
+		if (Game_Map::LoopVertical()) {
+			if (std::abs(sy) > Game_Map::GetTilesY() / 2) {
+				if (sy > 0)
+					sy -= Game_Map::GetTilesY();
+				else
+					sy += Game_Map::GetTilesY();
+			}
+		}
+		return round(sy * SCREEN_TILE_SIZE);
+	} // END - PIXELMOVE
+
+
+
 	int sy = GetY() - target.GetY();
 	if (Game_Map::LoopVertical()) {
 		if (std::abs(sy) > Game_Map::GetTilesY() / 2) {
@@ -1054,7 +1667,7 @@ bool Game_Character::CalculateMoveRoute(const CalculateMoveRouteArgs& args) {
 			route.skippable = args.skip_when_failed;
 			route.repeat = false;
 
-			for (SearchNode const& node2 : list_move) {
+			for (SearchNode node2 : list_move) {
 				if (node2.direction >= 0) {
 					lcf::rpg::MoveCommand cmd;
 					cmd.command_id = node2.direction;
@@ -1092,6 +1705,13 @@ bool Game_Character::CalculateMoveRoute(const CalculateMoveRouteArgs& args) {
 }
 
 int Game_Character::GetSpriteX() const {
+
+//	if (true) {
+    if (Player::game_config.allow_pixel_movement.Get()){        // TODO - PIXEL MOVE
+		return round(real_x * SCREEN_TILE_SIZE);
+	} // END - PIXELMOVE
+
+
 	int x = GetX() * SCREEN_TILE_SIZE;
 
 	if (IsMoving()) {
@@ -1108,6 +1728,13 @@ int Game_Character::GetSpriteX() const {
 }
 
 int Game_Character::GetSpriteY() const {
+
+//	if (true) {
+    if (Player::game_config.allow_pixel_movement.Get()){        // TODO - PIXEL MOVE
+		return round(real_x * SCREEN_TILE_SIZE);
+	} // END - PIXELMOVE
+
+
 	int y = GetY() * SCREEN_TILE_SIZE;
 
 	if (IsMoving()) {

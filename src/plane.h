@@ -42,6 +42,12 @@ public:
 	Tone GetTone() const;
 	void SetTone(Tone tone);
 
+	void SetOpacity(int opacity) { this->opacity = opacity; }
+	int GetOpacity() const { return opacity; }
+    void SetZoom(float zoom);
+    void SetBlendMode(int mode);
+    void SetWave(int amp, int phase);
+
 private:
 	BitmapRef bitmap;
 	BitmapRef tone_bitmap;
@@ -50,6 +56,8 @@ private:
 
 	int ox = 0;
 	int oy = 0;
+
+	int opacity = 255;
 	bool needs_refresh = false;
 };
 

@@ -1,20 +1,4 @@
-/*
- * This file is part of EasyRPG Player.
- *
- * EasyRPG Player is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * EasyRPG Player is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with EasyRPG Player. If not, see <http://www.gnu.org/licenses/>.
- */
-
+/*start of file .\battle_animation.cpp*/
 #include "bitmap.h"
 #include <lcf/rpg/animation.h>
 #include "output.h"
@@ -35,7 +19,7 @@
 #include "spriteset_map.h"
 
 BattleAnimation::BattleAnimation(const lcf::rpg::Animation& anim, bool only_sound, int cutoff) :
-	animation(anim), only_sound(only_sound)
+	animation(anim), only_sound(only_sound), last_update_frame(-1)
 {
 	num_frames = GetRealFrames() * 2;
 	if (cutoff >= 0 && cutoff < num_frames) {
@@ -43,6 +27,10 @@ BattleAnimation::BattleAnimation(const lcf::rpg::Animation& anim, bool only_soun
 	}
 
 	SetZ(Priority_BattleAnimation);
+
+	double initial_zoom = Main_Data::game_system->TakeNextBattleAnimationZoom();
+	SetZoomX(initial_zoom);
+	SetZoomY(initial_zoom);
 
 	std::string_view name = animation.animation_name;
 	BitmapRef graphic;
@@ -99,37 +87,56 @@ void BattleAnimation::DrawAt(Bitmap& dst, int x, int y) {
 
 	const lcf::rpg::AnimationFrame& anim_frame = animation.frames[GetRealFrame()];
 
+	// Cache the state for this draw call. This includes any modifications
+	// from the calling function (like Mode7 perspective zoom).
+	int base_opacity = GetOpacity();
+	double base_zoom_x = GetZoomX();
+	double base_zoom_y = GetZoomY();
+
 	std::vector<lcf::rpg::AnimationCellData>::const_iterator it;
 	for (it = anim_frame.cells.begin(); it != anim_frame.cells.end(); ++it) {
 		const lcf::rpg::AnimationCellData& cell = *it;
 
 		if (!cell.valid) {
-			// Skip unused cells (they are created by deleting cells in the
-			// animation editor, resulting in gaps)
 			continue;
 		}
 
 		SetX(invert ? x - cell.x : cell.x + x);
 		SetY(cell.y + y);
+
 		int sx = cell.cell_id % 5;
 		int sy = cell.cell_id / 5;
 		int size = animation.large ? 128 : 96;
 		SetSrcRect(Rect(sx * size, sy * size, size, size));
 		SetOx(size / 2);
 		SetOy(size / 2);
+
 		SetTone(Tone(cell.tone_red * 128 / 100,
 			cell.tone_green * 128 / 100,
 			cell.tone_blue * 128 / 100,
 			cell.tone_gray * 128 / 100));
-		SetOpacity(255 * (100 - cell.transparency) / 100);
-		SetZoomX(cell.zoom / 100.0);
-		SetZoomY(cell.zoom / 100.0);
+
+		// --- OPACITY ---
+		int cell_alpha = 255 * (100 - cell.transparency) / 100;
+		SetOpacity((cell_alpha * base_opacity) / 255);
+
+		// --- ZOOM ---
+		// FIX: Combine the base zoom with the cell's individual zoom.
+		double cell_zoom = cell.zoom / 100.0;
+		SetZoomX(base_zoom_x * cell_zoom);
+		SetZoomY(base_zoom_y * cell_zoom);
+
+		SetAngle(GetAngle());
 		SetFlipX(invert);
 		Sprite::Draw(dst);
 	}
 
+	// Restore the state for the next frame/target.
+	SetOpacity(base_opacity);
+	SetZoomX(base_zoom_x);
+	SetZoomY(base_zoom_y);
+
 	if (anim_frame.cells.empty()) {
-		// Draw an empty sprite when no cell is available in the animation
 		SetSrcRect(Rect(0, 0, 0, 0));
 		Sprite::Draw(dst);
 	}
@@ -229,9 +236,10 @@ static int CalculateOffset(int pos, int target_height) {
 
 /////////
 
-BattleAnimationMap::BattleAnimationMap(const lcf::rpg::Animation& anim, Game_Character& target, bool global) :
-	BattleAnimation(anim), target(&target), global(global)
+BattleAnimationMap::BattleAnimationMap(const lcf::rpg::Animation& anim, Game_Character* target, bool global, int x, int y) :
+	BattleAnimation(anim), target(target), global(global), fixed_pos(x, y)
 {
+    // target can now be nullptr
 }
 
 void BattleAnimationMap::SetTarget(Game_Character& target) {
@@ -253,33 +261,94 @@ void BattleAnimationMap::Draw(Bitmap& dst) {
 void BattleAnimationMap::DrawGlobal(Bitmap& dst) {
 	auto rect = Main_Data::game_screen->GetScreenEffectsRect();
 
-	for (int y = -1; y < 2; ++y) {
-		for (int x = -1; x < 2; ++x) {
-			DrawAt(dst, rect.width * x + rect.x, rect.height * y + rect.y);
+		if (Game_Map::GetIsMode7()) {
+		// In Mode7, project each of the 9 grid points into the 3D space.
+		for (int y = -1; y < 2; ++y) {
+			for (int x = -1; x < 2; ++x) {
+				// Calculate the original 2D screen coordinates for this grid cell
+				int x_off = rect.width * x + rect.x;
+				int y_off = rect.height * y + rect.y;
+
+				// Transform the 2D coordinates to their Mode7 equivalent
+				auto transform_result = Game_Map::TransformToMode7(x_off, y_off);
+
+				// Set the zoom for this specific animation instance before drawing
+				SetZoomX(transform_result.zoom);
+				SetZoomY(transform_result.zoom);
+
+				// Draw the animation at the transformed position
+				DrawAt(dst, transform_result.screen_x, transform_result.screen_y);
+			}
+		}
+		// Reset zoom after the loop to avoid side effects on other draws
+		SetZoomX(1.0);
+		SetZoomY(1.0);
+	} else {
+		// Original 2D logic for non-Mode7 maps
+		for (int y = -1; y < 2; ++y) {
+			for (int x = -1; x < 2; ++x) {
+				DrawAt(dst, rect.width * x + rect.x, rect.height * y + rect.y);
+			}
 		}
 	}
 }
 
 void BattleAnimationMap::DrawSingle(Bitmap& dst) {
-	//If animation is targeted on the screen
 	if (animation.scope == lcf::rpg::Animation::Scope_screen) {
 		DrawAt(dst, Player::screen_width / 2, Player::screen_height / 2);
 		return;
 	}
-	const int character_height = 24;
-	int x_off = target->GetScreenX();
-	int y_off = target->GetScreenY(false);
-	if (Scene::instance->type == Scene::Map) {
-		x_off += static_cast<Scene_Map*>(Scene::instance.get())->spriteset->GetRenderOx();
-		y_off += static_cast<Scene_Map*>(Scene::instance.get())->spriteset->GetRenderOy();
+
+	int x_off, y_off;
+
+	if (target) {
+		x_off = target->GetScreenX();
+		y_off = target->GetScreenY(false);
+
+		if (Scene::instance->type == Scene::Map) {
+			x_off += static_cast<Scene_Map*>(Scene::instance.get())->spriteset->GetRenderOx();
+			y_off += static_cast<Scene_Map*>(Scene::instance.get())->spriteset->GetRenderOy();
+		}
+	} else {
+		x_off = fixed_pos.x;
+		y_off = fixed_pos.y;
 	}
-	int vertical_center = y_off - character_height / 2;
-	int offset = CalculateOffset(animation.position, character_height);
+
+	// FIX: Cache the base zoom set by the command before applying perspective.
+	double base_zoom_x = GetZoomX();
+	double base_zoom_y = GetZoomY();
+
+	// Mode7 Transformation
+	if (Game_Map::GetIsMode7()) {
+		auto transform_result = Game_Map::TransformToMode7(x_off, y_off);
+		x_off = transform_result.screen_x;
+		y_off = transform_result.screen_y;
+
+		// FIX: Combine the base zoom with the perspective zoom instead of overwriting it.
+		SetZoomX(base_zoom_x * transform_result.zoom);
+		SetZoomY(base_zoom_y * transform_result.zoom);
+	} else {
+		if (Player::game_config.fake_resolution.Get()) {
+			x_off += Player::menu_offset_x;
+			y_off += Player::menu_offset_y;
+		}
+	}
+
+	const int character_height = 24;
+	int vertical_center = y_off - static_cast<int>((character_height / 2) * GetZoomY());
+	int offset = static_cast<int>(CalculateOffset(animation.position, character_height) * GetZoomY());
 
 	DrawAt(dst, x_off, vertical_center + offset);
+
+	// FIX: Restore the base zoom after drawing is complete.
+	SetZoomX(base_zoom_x);
+	SetZoomY(base_zoom_y);
 }
 
 void BattleAnimationMap::FlashTargets(int r, int g, int b, int p) {
+    if (!target) {
+		return; // No event to flash, just skip it
+	}
 	target->Flash(r, g, b, p, 0);
 }
 
@@ -297,6 +366,11 @@ BattleAnimationBattle::BattleAnimationBattle(const lcf::rpg::Animation& anim, st
 void BattleAnimationBattle::Draw(Bitmap& dst) {
 	if (IsOnlySound())
 		return;
+
+	// Ensure opacity is reset for the battle animation sprite to prevent
+	// potential inter-frame decay if DrawAt isn't cleaning up perfectly.
+	SetOpacity(255);
+
 	if (animation.scope == lcf::rpg::Animation::Scope_screen) {
 		DrawAt(dst, Player::menu_offset_x + (Player::screen_width / 2), Player::menu_offset_y + (Player::screen_height / 3));
 		return;
@@ -342,7 +416,15 @@ void BattleAnimationBattler::Draw(Bitmap& dst) {
 	}
 
 	for (auto* battler: battlers) {
+        if (battler->IsProxyHidden()) {
+			continue;
+		}
+
 		SetFlashEffect(battler->GetFlashColor());
+		SetZoomX(battler->GetCustomZoom());
+		SetZoomY(battler->GetCustomZoom());
+		SetOpacity(battler->GetCustomOpacity());
+		SetAngle(battler->GetCustomAngle() * (M_PI / 180.0));
 		// Game_Battler::GetDisplayX() and Game_Battler::GetDisplayX() already add MENU_OFFSET
 		DrawAt(dst, battler->GetDisplayX(), battler->GetDisplayY());
 	}
@@ -415,3 +497,4 @@ void BattleAnimation::SetFrame(int frame) {
 void BattleAnimation::SetInvert(bool inverted) {
 	invert = inverted;
 }
+

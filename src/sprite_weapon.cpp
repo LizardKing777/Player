@@ -134,6 +134,9 @@ void Sprite_Weapon::Draw(Bitmap& dst) {
 	}
 
 	SetTone(Main_Data::game_screen->GetTone());
+    SetZoomX(battler->GetCustomZoom());
+	SetZoomY(battler->GetCustomZoom());
+
 	if (!ranged) {
 		SetX(battler->GetDisplayX());
 		SetY(battler->GetDisplayY());

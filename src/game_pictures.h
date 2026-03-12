@@ -24,6 +24,7 @@
 #include "async_handler.h"
 #include <lcf/rpg/savepicture.h>
 #include "sprite_picture.h"
+#include <spritesetmap_doom.h>
 
 class Sprite_Picture;
 class Scene;
@@ -84,6 +85,13 @@ public:
 
 	bool Show(int id, const ShowParams& params);
 	void Move(int id, const MoveParams& params);
+
+    void Show3D(std::string n, int picID, int zoom, int dx, int dy, int rx, int ry, int rz);
+	void Rotate3D(int picID, int rx, int ry, int rz);
+	void Get3DRotation(int picID, int vx, int vy, int vz);
+	void ShowDoomMap(int picID);
+
+
 	void Erase(int id);
 	void EraseAll();
 
@@ -128,6 +136,14 @@ public:
 
 		void AttachWindow(const Window_Base& window);
 		bool IsWindowAttached() const;
+
+
+		void Show3D(std::string n, int zoom, int dx, int dy, int rx, int ry, int rz);
+		void Rotate3D(int rx, int ry, int rz);
+		void Get3DRotation(int vx, int vy, int vz);
+		void ShowDoomMap();
+		Spriteset_MapDoom* pic3D = nullptr;
+
 	};
 
 	Picture& GetPicture(int id);

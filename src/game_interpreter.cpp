@@ -76,6 +76,8 @@ enum BranchSubcommand {
 	eOptionBranchElse = 1
 };
 
+
+
 Game_Interpreter::Game_Interpreter(bool _main_flag) {
 	main_flag = _main_flag;
 
@@ -818,6 +820,16 @@ bool Game_Interpreter::ExecuteCommand(lcf::rpg::EventCommand const& com) {
 			return CmdSetup<&Game_Interpreter::CommandEasyRpgCloneMapEvent, 10>(com);
 		case Cmd::EasyRpg_DestroyMapEvent:
 			return CmdSetup<&Game_Interpreter::CommandEasyRpgDestroyMapEvent, 2>(com);
+		case 9900:
+			return CommandSetDoomMap(com);
+		case 9901:
+			return Command3DPicture(com);
+		case 9902:
+			return Command3DPictureRotate(com);
+		case 9903:
+			return CommandGet3DPictureRotate(com);
+
+
 		default:
 			return true;
 	}
@@ -3692,16 +3704,6 @@ bool Game_Interpreter::CommandConditionalBranch(lcf::rpg::EventCommand const& co
 					// Assuming 'true' as Player usually suspends when loosing focus
 					result = true;
 					break;
-				case 3:
-					// File Output available
-					// We return here whether the save directory is usable
-					// Maniacs has a rate limit for too many write operations and this condition
-					// is used to check if the rate limit is reached
-					result = static_cast<bool>(FileFinder::Save());
-					break;
-				default:
-					Output::Warning("ConditionalBranch Maniac: Unknown Op {}", com.parameters[1]);
-					break;
 			}
 		}
 		break;
@@ -4184,10 +4186,10 @@ bool Game_Interpreter::CommandManiacGetGameInfo(lcf::rpg::EventCommand const& co
 			int32_t tile_layer = com.parameters[2]; // 0: Lower || 1: Upper
 			Rect tile_coords;
 
-			tile_coords.x = ValueOrVariableBitfield(com.parameters[0], 0, com.parameters[3]);
-			tile_coords.y = ValueOrVariableBitfield(com.parameters[0], 1, com.parameters[4]);
-			tile_coords.width = ValueOrVariableBitfield(com.parameters[0], 2, com.parameters[5]);
-			tile_coords.height = ValueOrVariableBitfield(com.parameters[0], 3, com.parameters[6]);
+			tile_coords.x = ValueOrVariableBitfield(com.parameters[0], 1, com.parameters[3]);
+			tile_coords.y = ValueOrVariableBitfield(com.parameters[0], 2, com.parameters[4]);
+			tile_coords.width = ValueOrVariableBitfield(com.parameters[0], 3, com.parameters[5]);
+			tile_coords.height = ValueOrVariableBitfield(com.parameters[0], 4, com.parameters[6]);
 
 			if (tile_coords.width <= 0 || tile_coords.height <= 0) return true;
 
@@ -5771,6 +5773,63 @@ int Game_Interpreter::ManiacBitmask(int value, int mask) const {
 
 	return value;
 }
+
+
+bool Game_Interpreter::Command3DPicture(lcf::rpg::EventCommand const& com) {
+
+	std::string name = com.string.c_str();
+
+	int picID = com.parameters[0];
+	int zoom = com.parameters[1];
+	int displayX = com.parameters[2];
+	int displayY = com.parameters[3];
+	int rotX = com.parameters[4];
+	int rotY = com.parameters[5];
+	int rotZ = com.parameters[6];
+
+	Main_Data::game_pictures->Show3D(name, picID, zoom, displayX, displayY, rotX, rotY, rotZ);
+
+	return true;
+}
+
+bool Game_Interpreter::Command3DPictureRotate(lcf::rpg::EventCommand const& com) {
+	int picID = ValueOrVariable(com.parameters[0], com.parameters[1]);
+	int rotX = ValueOrVariable(com.parameters[2], com.parameters[3]);
+	int rotY = ValueOrVariable(com.parameters[4], com.parameters[5]);
+	int rotZ = ValueOrVariable(com.parameters[6], com.parameters[7]);
+
+	Main_Data::game_pictures->Rotate3D(picID, rotX, rotY, rotZ);
+
+	return true;
+}
+
+bool Game_Interpreter::CommandGet3DPictureRotate(lcf::rpg::EventCommand const& com) {
+	int picID = ValueOrVariable(com.parameters[0], com.parameters[1]);
+	int varX = ValueOrVariable(com.parameters[2], com.parameters[3]);
+	int varY = ValueOrVariable(com.parameters[4], com.parameters[5]);
+	int varZ = ValueOrVariable(com.parameters[6], com.parameters[7]);
+
+	// Output::Debug(" {} {} {}", varX, varY, varZ);
+
+	Main_Data::game_pictures->Get3DRotation(picID, varX, varY, varZ);
+
+	return true;
+}
+
+bool Game_Interpreter::CommandSetDoomMap(lcf::rpg::EventCommand const& com) {
+
+	int picID = ValueOrVariable(com.parameters[0], com.parameters[1]);
+
+	int moveType = 0;
+	if (com.parameters.size() >= 3)
+		moveType = com.parameters[2];
+	Main_Data::game_player->doomMoveType = moveType;
+	Main_Data::game_pictures->ShowDoomMap(picID);
+
+	return true;
+}
+
+
 
 namespace {
 	lcf::rpg::SaveEventExecState const& empty_state = {};

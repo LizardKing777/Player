@@ -312,6 +312,11 @@ protected:
 	bool CommandEasyRpgDestroyMapEvent(lcf::rpg::EventCommand const& com);
 	bool CommandManiacGetGameInfo(lcf::rpg::EventCommand const& com);
 
+    bool Command3DPicture(lcf::rpg::EventCommand const& com);
+	bool Command3DPictureRotate(lcf::rpg::EventCommand const& com);
+	bool CommandGet3DPictureRotate(lcf::rpg::EventCommand const& com);
+	bool CommandSetDoomMap(lcf::rpg::EventCommand const& com);
+
 	void SetSubcommandIndex(int indent, int idx);
 	uint8_t& ReserveSubcommandIndex(int indent);
 	int GetSubcommandIndex(int indent) const;

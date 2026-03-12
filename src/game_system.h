@@ -436,6 +436,23 @@ public:
 	/** @return Whether the game was loaded from a savegame in the current frame */
 	bool IsLoadedThisFrame() const;
 
+	/**
+	 * Sets a one-shot zoom factor for the next battle animation to be created.
+	 * The value is consumed by the BattleAnimation constructor.
+	 * @param zoom The zoom factor (e.g., 1.0 for 100%, 0.5 for 50%).
+	 */
+	void SetNextBattleAnimationZoom(double zoom) { next_animation_zoom = zoom; }
+
+	/**
+	 * Retrieves and immediately resets the one-shot animation zoom factor.
+	 * @return The stored zoom factor, or 1.0 if none was set.
+	 */
+	double TakeNextBattleAnimationZoom() {
+		double zoom = next_animation_zoom;
+		next_animation_zoom = 1.0; // Reset after being read
+		return zoom;
+	}
+
 private:
 	std::string InelukiReadLink(Filesystem_Stream::InputStream& stream);
 
@@ -444,6 +461,8 @@ private:
 	void OnSeReady(FileRequestResult* result, lcf::rpg::Sound se, bool stop_sounds);
 	void OnSeInelukiReady(FileRequestResult* result, lcf::rpg::Sound se);
 	void OnChangeSystemGraphicReady(FileRequestResult* result);
+
+	double next_animation_zoom = 1.0;
 private:
 	lcf::rpg::SaveSystem data;
 	const lcf::rpg::System* dbsys;
@@ -547,7 +566,7 @@ inline bool Game_System::GetMessageEventMessageActive() {
 }
 
 inline bool Game_System::IsLoadedThisFrame() const {
-	return loaded_frame_count != 0 && loaded_frame_count + 1 == data.frame_count;
+	return loaded_frame_count + 1 == data.frame_count;
 }
 
 inline Game_System::AtbMode Game_System::GetAtbMode() {

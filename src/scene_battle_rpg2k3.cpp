@@ -550,6 +550,9 @@ static std::vector<std::string> GetEnemyTargetNames() {
 	Main_Data::game_enemyparty->GetActiveBattlers(enemies);
 
 	for (auto& enemy: enemies) {
+        if (enemy->IsProxyHidden()) {
+            continue;
+        }
 		commands.push_back(ToString(enemy->GetName()));
 	}
 
@@ -3031,3 +3034,6 @@ void Scene_Battle_Rpg2k3::CBAMove() {
 		}
 	}
 }
+
+
+

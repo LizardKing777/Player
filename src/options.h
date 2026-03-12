@@ -49,6 +49,8 @@
 /** Working with hi resolutions. default 16 */
 #define TILE_SIZE 16
 
+#define MODE7_CANVAS_HALFSIZE 512
+
 /** Targeted screen bits per pixel. */
 #define SCREEN_TARGET_BPP 32
 

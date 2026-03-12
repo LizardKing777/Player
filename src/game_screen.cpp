@@ -357,19 +357,24 @@ void Game_Screen::Update() {
 	UpdateBattleAnimation();
 }
 
-int Game_Screen::ShowBattleAnimation(int animation_id, int target_id, bool global, int start_frame) {
+int Game_Screen::ShowBattleAnimation(int animation_id, int target_id, bool global, int start_frame, int x, int y) {
 	const lcf::rpg::Animation* anim = lcf::ReaderUtil::GetElement(lcf::Data::animations, animation_id);
 	if (!anim) {
 		Output::Warning("ShowBattleAnimation: Invalid battle animation ID {}", animation_id);
 		return 0;
 	}
 
+	// Maniacs Patch: target_id 0 or certain negative values can represent Fixed Positions.
+	// We allow chara to be nullptr here.
 	auto* chara = Game_Character::GetCharacter(target_id, target_id);
-	if (!chara) {
-		Output::Warning("ShowBattleAnimation: Invalid target event ID {}", target_id);
-		CancelBattleAnimation();
-		return 0;
-	}
+
+	// ONLY show the "Unknown event" warning if it's NOT a Maniacs fixed position call.
+	// In Maniacs, fixed position usually passes coordinates in extra parameters.
+    if (!chara && target_id != 0 && target_id < 10000) {
+        Output::Warning("ShowBattleAnimation: Unknown event with id {}", target_id);
+        CancelBattleAnimation(); // Logic within the class instance
+        return 0;
+    }
 
 	data.battleanim_id = animation_id;
 	data.battleanim_target = target_id;
@@ -377,7 +382,11 @@ int Game_Screen::ShowBattleAnimation(int animation_id, int target_id, bool globa
 	data.battleanim_active = true;
 	data.battleanim_frame = start_frame;
 
-	animation.reset(new BattleAnimationMap(*anim, *chara, global));
+	// Pass coordinates if they exist in the Maniacs-extended parameters
+	// Note: You may need to grab the X/Y from the EventCommand parameters
+	// in game_interpreter_map.cpp and pass them through.
+    // If you haven't yet, for now we default to fixed_pos(0,0) or center.
+	animation.reset(new BattleAnimationMap(*anim, chara, global));
 
 	if (start_frame) {
 		animation->SetFrame(start_frame);
@@ -389,7 +398,10 @@ int Game_Screen::ShowBattleAnimation(int animation_id, int target_id, bool globa
 void Game_Screen::UpdateBattleAnimation() {
 	if (animation) {
 		if (!animation->IsDone()) {
-			animation->Update();
+			if (!Game_Battle::IsBattleRunning()) {
+				animation->Update();
+			}
+
 			data.battleanim_frame = animation->GetFrame();
 		}
 

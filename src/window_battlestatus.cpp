@@ -321,6 +321,11 @@ void Window_BattleStatus::UpdateCursorRect() {
 }
 
 bool Window_BattleStatus::IsChoiceValid(const Game_Battler& battler) const {
+
+    if (battler.IsProxyHidden()) {
+        return false;
+    }
+
 	switch (mode) {
 		case ChoiceMode_All:
 			return true;

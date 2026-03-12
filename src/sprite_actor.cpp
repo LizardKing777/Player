@@ -280,9 +280,16 @@ void Sprite_Actor::Draw(Bitmap& dst) {
 	auto* battler = GetBattler();
 	// "do_not_draw" is set to true if the CBA battler name is empty, this
 	// makes the sprite not being drawn. This fixes issue #1708.
-	if (battler->IsHidden() || do_not_draw) {
+	if (battler->IsHidden() || battler->IsProxyHidden() || do_not_draw) {
 		return;
 	}
+
+    int final_alpha = battler->GetCustomOpacity();
+    SetOpacity(final_alpha);
+    SetAngle(battler->GetCustomAngle() * (M_PI / 180.0));
+
+    SetZoomX(battler->GetCustomZoom());
+    SetZoomY(battler->GetCustomZoom());
 
 	SetTone(Main_Data::game_screen->GetTone());
 	SetFlashEffect(battler->GetFlashColor());

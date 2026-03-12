@@ -21,6 +21,7 @@
 // Headers
 #include "game_battler.h"
 #include "game_character.h"
+#include "game_clock.h"
 #include "system.h"
 #include <lcf/rpg/animation.h>
 #include "drawable.h"
@@ -102,13 +103,15 @@ protected:
 	FileRequestBinding request_id;
 	bool only_sound = false;
 	bool invert = false;
+    Game_Clock::time_point last_update_tick;
+    int last_update_frame = -1;
+
 };
 
 // For playing animations on the map.
 class BattleAnimationMap : public BattleAnimation {
 public:
-	BattleAnimationMap(const lcf::rpg::Animation& anim, Game_Character& target, bool global);
-	void SetTarget(Game_Character& target);
+    BattleAnimationMap(const lcf::rpg::Animation& anim, Game_Character* target, bool global, int x = 0, int y = 0);	void SetTarget(Game_Character& target);
 	void Draw(Bitmap& dst) override;
 protected:
 	void FlashTargets(int r, int g, int b, int p) override;
@@ -118,6 +121,7 @@ protected:
 
 	Game_Character* target;
 	bool global = false;
+    Point fixed_pos;
 };
 
 // For playing animations against a (group of) battlers in battle.

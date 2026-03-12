@@ -523,3 +523,25 @@ void Scene_Map::UpdateInn() {
 	Main_Data::game_system->BgmStop();
 	FinishInn();
 }
+
+BitmapRef Scene_Map::GetEventSprite(int i) {
+	auto s = spriteset->GetEventSprite(i);
+	return s;
+}
+
+
+BitmapRef Scene_Map::GetChipset() {
+	return spriteset->GetChipset();
+}
+
+BitmapRef Scene_Map::GetTile(int x, int y, int layer) {
+	return spriteset->GetTile(x, y, layer);
+}
+
+int Scene_Map::GetTileID(int x, int y, int layer) {
+	return spriteset->GetTileID(x, y, layer);
+}
+
+TilemapLayer* Scene_Map::GetTilemap(int i) {
+	return spriteset->GetTilemap(i);
+}

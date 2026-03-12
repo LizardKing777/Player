@@ -661,6 +661,9 @@ void Game_Battler::ResetBattle() {
 	battle_combo_command_id = -1;
 	battle_combo_times = 1;
 	attribute_shift.clear();
+	custom_zoom = 1.0f;
+    is_proxy_hidden = false;
+    custom_opacity = 255;
 	SetBattleAlgorithm(nullptr);
 	SetBattleSprite(nullptr);
 	SetWeaponSprite(nullptr);

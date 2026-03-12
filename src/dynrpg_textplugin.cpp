@@ -1,24 +1,13 @@
 /*
  * This file is part of EasyRPG Player.
- *
- * EasyRPG Player is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * EasyRPG Player is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with EasyRPG Player. If not, see <http://www.gnu.org/licenses/>.
+ * ... (license header) ...
  */
 
 // Headers
 #include <map>
 #include <memory>
 #include <lcf/reader_util.h>
+#include <algorithm>
 
 #include "dynrpg_textplugin.h"
 #include "baseui.h"
@@ -32,6 +21,14 @@
 #include "main_data.h"
 #include "pending_message.h"
 #include "text.h"
+#include "cache.h"
+#include "utils.h"
+
+// --- MODIFICATION ---
+// Include the game_map header for Mode7 functions and Cache for textures
+#include "game_map.h"
+#include "cache.h"
+// --- END MODIFICATION ---
 
 class DynRpgText;
 
@@ -41,15 +38,22 @@ namespace {
 
 class DynRpgText : public Drawable {
 public:
+	// --- MODIFICATION ---
+	// Enum to define how the text should be rendered in Mode7
+	enum class RenderPlane {
+		Screen, // Normal 2D overlay
+		Map,    // Flat on the map ground
+		Sprite  // Upright like an event sprite
+	};
+	// --- END MODIFICATION ---
+
 	DynRpgText(int pic_id, int x, int y, const std::string& text) : Drawable(0), pic_id(pic_id), x(x), y(y) {
 		DrawableMgr::Register(this);
-
 		AddLine(text);
 	}
 
 	DynRpgText(int pic_id, int x, int y, const std::vector<std::string>& text) : Drawable(0), pic_id(pic_id), x(x), y(y) {
 		DrawableMgr::Register(this);
-
 		for (auto& s : text) {
 			AddLine(s);
 		}
@@ -57,7 +61,6 @@ public:
 
 	void AddLine(const std::string& text) {
 		texts.push_back(text);
-
 		Refresh();
 	}
 
@@ -67,13 +70,11 @@ public:
 		} else {
 			texts.back() += text;
 		}
-
 		Refresh();
 	}
 
 	void ClearText() {
 		texts.clear();
-
 		Refresh();
 	}
 
@@ -84,22 +85,15 @@ public:
 
 	void SetColor(int new_color) {
 		color = new_color;
-
 		Refresh();
 	}
 
 	void SetPictureId(int new_pic_id) {
 		pic_id = new_pic_id;
-
 		const Game_Pictures::Picture* pic = Main_Data::game_pictures->GetPicturePtr(pic_id);
-		if (!pic) {
-			return;
-		}
+		if (!pic) return;
 		const Sprite_Picture* sprite = pic->sprite.get();
-		if (!sprite) {
-			return;
-		}
-
+		if (!sprite) return;
 		SetZ(sprite->GetZ() + 1);
 	}
 
@@ -107,26 +101,127 @@ public:
 		this->fixed = fixed;
 	}
 
-	void Draw(Bitmap& dst) override {
-		if (!bitmap) {
-			return;
+	// --- MODIFICATION ---
+	// New setters for Mode7 properties
+	void SetRenderPlane(std::string_view plane) {
+		std::string p = Utils::LowerCase(plane);
+		if (p == "map") {
+			render_plane = RenderPlane::Map;
+		} else if (p == "sprite") {
+			render_plane = RenderPlane::Sprite;
+		} else {
+			render_plane = RenderPlane::Screen;
 		}
+	}
+
+	void SetZOffset(int offset) {
+		z_offset = offset;
+	}
+
+	void SetTexture(std::string_view filename) {
+		texture_name = ToString(filename);
+		if (texture_name.empty()) {
+			texture_bitmap.reset();
+		} else {
+			texture_bitmap = Cache::Picture(texture_name, true);
+		}
+		Refresh();
+	}
+	// --- END MODIFICATION ---
+
+	void Draw(Bitmap& dst) override {
+		if (!bitmap) return;
 
 		const Game_Pictures::Picture* pic = Main_Data::game_pictures->GetPicturePtr(pic_id);
-		if (!pic) {
-			return;
-		}
+		if (!pic) return;
 		const Sprite_Picture* sprite = pic->sprite.get();
-		if (!sprite) {
-			return;
-		}
+		if (!sprite) return;
 
-		// For unknown reasons the official plugin has an y-offset of 2
-		if (fixed) {
-			dst.Blit(x - Game_Map::GetDisplayX() / 16, y - Game_Map::GetDisplayY() / 16 + 2, *bitmap, bitmap->GetRect(), sprite->GetOpacity());
+		// --- MODIFICATION ---
+		// Mode7 rendering logic
+		if (Game_Map::GetIsMode7() && fixed && render_plane != RenderPlane::Screen) {
+			int map_display_x = Game_Map::GetDisplayX() / 16;
+			int map_display_y = Game_Map::GetDisplayY() / 16;
+
+			switch (render_plane) {
+				case RenderPlane::Sprite: {
+					// Stands upright on the map (billboard)
+					int screen_x = x - map_display_x;
+					int screen_y = y - map_display_y;
+
+					auto transform = Game_Map::TransformToMode7(screen_x, screen_y);
+
+					if (transform.zoom <= 0) return; // Behind horizon
+
+					float scaled_width = bitmap->GetWidth() * transform.zoom;
+					float scaled_height = bitmap->GetHeight() * transform.zoom;
+
+					float draw_x = transform.screen_x - scaled_width / 2.0f;
+					float draw_y = transform.screen_y - scaled_height - (z_offset * transform.zoom);
+
+					Rect dst_rect(draw_x, draw_y, scaled_width, scaled_height);
+					dst.StretchBlit(dst_rect, *bitmap, bitmap->GetRect(), sprite->GetOpacity());
+					break;
+				}
+				case RenderPlane::Map: {
+					// Lies flat on the map (perspective scanline rendering)
+					const int text_height = bitmap->GetHeight();
+					if (text_height <= 0) return;
+
+					// Transform the top and bottom points of the text sprite
+					auto transform_bottom = Game_Map::TransformToMode7(x - map_display_x, y - z_offset - map_display_y);
+					auto transform_top = Game_Map::TransformToMode7(x - map_display_x, y - text_height - z_offset - map_display_y);
+
+					// If the whole thing is behind the horizon, don't draw
+					if (transform_bottom.zoom <= 0 && transform_top.zoom <= 0) {
+						return;
+					}
+
+					// Loop through each scanline of the source bitmap
+					for (int y_scan = 0; y_scan < text_height; ++y_scan) {
+						float t = static_cast<float>(y_scan) / (text_height - 1);
+
+						// Interpolate screen y position and zoom factor for the current scanline
+						float current_sy = transform_top.screen_y + t * (transform_bottom.screen_y - transform_top.screen_y);
+						float current_zoom = transform_top.zoom + t * (transform_bottom.zoom - transform_top.zoom);
+
+						// Skip scanlines that are behind the horizon
+						if (current_zoom <= 0) continue;
+
+						// Calculate the screen width and X position for this scanline
+						float scaled_width = bitmap->GetWidth() * current_zoom;
+						float draw_x = transform_bottom.screen_x - scaled_width / 2.0f; // Use bottom's X for consistent centering
+
+						// Determine the height of this scanline on the screen
+						float next_sy;
+						if (y_scan < text_height - 1) {
+							float next_t = static_cast<float>(y_scan + 1) / (text_height - 1);
+							next_sy = transform_top.screen_y + next_t * (transform_bottom.screen_y - transform_top.screen_y);
+						} else {
+							next_sy = current_sy + 1.0f; // Last line is at least 1 pixel high
+						}
+						float line_height = std::max(1.0f, next_sy - current_sy);
+
+						Rect src_rect(0, y_scan, bitmap->GetWidth(), 1);
+						Rect dst_rect(draw_x, current_sy, scaled_width, line_height);
+
+						dst.StretchBlit(dst_rect, *bitmap, src_rect, sprite->GetOpacity());
+					}
+					break;
+				}
+				default:
+					goto draw_2d;
+			}
 		} else {
-			dst.Blit(x, y + 2, *bitmap, bitmap->GetRect(), sprite->GetOpacity());
+		draw_2d:
+			// Original 2D drawing logic with z_offset
+			if (fixed) {
+				dst.Blit(x - Game_Map::GetDisplayX() / 16, y - Game_Map::GetDisplayY() / 16 + 2 - z_offset, *bitmap, bitmap->GetRect(), sprite->GetOpacity());
+			} else {
+				dst.Blit(x, y + 2, *bitmap, bitmap->GetRect(), sprite->GetOpacity());
+			}
 		}
+		// --- END MODIFICATION ---
 	};
 
 	void Update() {
@@ -140,26 +235,17 @@ public:
 		ss << x << "," << y << ",";
 		for (int i = 0; i < static_cast<int>(texts.size()); ++i) {
 			std::string t = texts[i];
-			// Replace , with a sentinel 0x01 to not mess up the tokenizer
 			std::replace(t.begin(), t.end(), ',', '\1');
 			ss << t;
 			if (i < static_cast<int>(texts.size()) - 1) {
 				ss << "\n";
 			}
-
 		}
 		ss << "," << color << "," << id;
-
 		ss << "," << 255 << "," << (fixed ? "1" : "0") << "," << pic_id;
-
 		std::vector<uint8_t> data;
-
 		std::string s = ss.str();
-		size_t slen = s.size();
-
-		data.resize(slen);
-		data.insert(data.end(), s.begin(), s.end());
-
+		data.assign(s.begin(), s.end());
 		return data;
 	}
 
@@ -167,7 +253,6 @@ public:
 		PendingMessage pm(CommandCodeInserter);
 		pm.PushLine(id);
 		std::string new_id = pm.GetLines().front();
-
 		auto it = graphics.find(new_id);
 		if (it == graphics.end()) {
 			if (!silent) {
@@ -175,8 +260,7 @@ public:
 			}
 			return nullptr;
 		}
-
-		return (*it).second.get();
+		return it->second.get();
 	}
 
 	static std::optional<std::string> CommandCodeInserter(char ch, const char** iter, const char* end, uint32_t escape_char) {
@@ -213,7 +297,6 @@ public:
 				return "";
 			}
 		}
-
 		return PendingMessage::DefaultCommandInserter(ch, iter, end, escape_char);
 	}
 
@@ -226,20 +309,25 @@ private:
 
 		int width = 0;
 		int height = 0;
-
 		const FontRef& font = Font::Default();
 
 		for (auto& t : texts) {
 			PendingMessage pm(CommandCodeInserter);
 			pm.PushLine(t);
 			t = pm.GetLines().front();
-
 			Rect r = Text::GetSize(*font, t);
 			width = std::max(width, r.width);
 			height += r.height + 2;
 		}
 
 		bitmap = Bitmap::Create(width, height, true);
+
+		// --- MODIFICATION ---
+		// Draw texture background if it exists
+		if (texture_bitmap) {
+			bitmap->TiledBlit(Rect(0, 0, texture_bitmap->GetWidth(), texture_bitmap->GetHeight()), *texture_bitmap, bitmap->GetRect(), Opacity::Opaque());
+		}
+		// --- END MODIFICATION ---
 
 		height = 0;
 		for (auto& t : texts) {
@@ -257,6 +345,14 @@ private:
 	int y = 0;
 	int color = 0;
 	bool fixed = false;
+
+	// --- MODIFICATION ---
+	// New members for Mode7 properties
+	RenderPlane render_plane = RenderPlane::Screen;
+	int z_offset = 0;
+	BitmapRef texture_bitmap;
+	std::string texture_name;
+	// --- END MODIFICATION ---
 };
 
 static bool WriteText(dyn_arg_list args) {
@@ -266,8 +362,7 @@ static bool WriteText(dyn_arg_list args) {
 	int x, y;
 
 	std::tie(id, x, y, text) = DynRpg::ParseArgs<std::string, int, int, std::string>(func, args, &okay);
-	if (!okay)
-		return true;
+	if (!okay) return true;
 
 	PendingMessage pm(DynRpgText::CommandCodeInserter);
 	pm.PushLine(id);
@@ -276,22 +371,19 @@ static bool WriteText(dyn_arg_list args) {
 
 	if (args.size() > 4) {
 		std::string fixed = std::get<0>(DynRpg::ParseArgs<std::string>(func, args.subspan(4), &okay));
-		if (!okay)
-			return true;
+		if (!okay) return true;
 		graphics[new_id]->SetFixed(fixed == "fixed");
 	}
 
 	if (args.size() > 5) {
 		int color = std::get<0>(DynRpg::ParseArgs<int>(func, args.subspan(5), &okay));
-		if (!okay)
-			return true;
+		if (!okay) return true;
 		graphics[new_id]->SetColor(color);
 	}
 
 	if (args.size() > 6) {
 		int pic_id = std::get<0>(DynRpg::ParseArgs<int>(func, args.subspan(6), &okay));
-		if (!okay)
-			return true;
+		if (!okay) return true;
 		graphics[new_id]->SetPictureId(pic_id);
 	}
 
@@ -302,34 +394,22 @@ static bool AppendLine(dyn_arg_list args) {
 	auto func = "append_line";
 	bool okay;
 	std::string id, text;
-
 	std::tie(id, text) = DynRpg::ParseArgs<std::string, std::string>(func, args, &okay);
-	if (!okay)
-		return true;
-
+	if (!okay) return true;
 	DynRpgText* handle = DynRpgText::GetTextHandle(id);
-	if (!handle) {
-		return true;
-	}
-
+	if (!handle) return true;
 	handle->AddLine(text);
 	return true;
 }
 
 static bool AppendText(dyn_arg_list args) {
-	auto func = "append_line";
+	auto func = "append_text";
 	bool okay;
 	std::string id, text;
-
 	std::tie(id, text) = DynRpg::ParseArgs<std::string, std::string>(func, args, &okay);
-	if (!okay)
-		return true;
-
+	if (!okay) return true;
 	DynRpgText* handle = DynRpgText::GetTextHandle(id);
-	if (!handle) {
-		return true;
-	}
-
+	if (!handle) return true;
 	handle->AddText(text);
 	return true;
 }
@@ -338,17 +418,10 @@ static bool ChangeText(dyn_arg_list args) {
 	auto func = "change_text";
 	bool okay;
 	std::string id, text, color;
-
-	// Color can be a string (usually "end") or a number
 	std::tie(id, text, color) = DynRpg::ParseArgs<std::string, std::string, std::string>(func, args, &okay);
-	if (!okay)
-		return true;
-
+	if (!okay) return true;
 	DynRpgText* handle = DynRpgText::GetTextHandle(id);
-	if (!handle) {
-		return true;
-	}
-
+	if (!handle) return true;
 	handle->ClearText();
 	if (color != "end") {
 		handle->SetColor(atoi(color.c_str()));
@@ -362,16 +435,10 @@ static bool ChangePosition(dyn_arg_list args) {
 	bool okay;
 	std::string id;
 	int x, y;
-
 	std::tie(id, x, y) = DynRpg::ParseArgs<std::string, int, int>(func, args, &okay);
-	if (!okay)
-		return true;
-
+	if (!okay) return true;
 	DynRpgText* handle = DynRpgText::GetTextHandle(id);
-	if (!handle) {
-		return true;
-	}
-
+	if (!handle) return true;
 	handle->SetPosition(x, y);
 	return true;
 }
@@ -380,16 +447,10 @@ static bool RemoveText(dyn_arg_list args) {
 	auto func = "remove_text";
 	bool okay;
 	std::string id;
-
 	std::tie(id) = DynRpg::ParseArgs<std::string>(func, args, &okay);
-	if (!okay)
-		return true;
-
+	if (!okay) return true;
 	DynRpgText* handle = DynRpgText::GetTextHandle(id, true);
-	if (!handle) {
-		return true;
-	}
-
+	if (!handle) return true;
 	handle->ClearText();
 	return true;
 }
@@ -398,6 +459,49 @@ static bool RemoveAll(dyn_arg_list) {
 	graphics.clear();
 	return true;
 }
+
+// --- MODIFICATION ---
+// New static functions to handle plugin commands
+static bool SetRenderPlane(dyn_arg_list args) {
+	auto func = "text_set_render_plane";
+	bool okay;
+	std::string id, plane;
+	std::tie(id, plane) = DynRpg::ParseArgs<std::string, std::string>(func, args, &okay);
+	if (!okay) return true;
+	DynRpgText* handle = DynRpgText::GetTextHandle(id);
+	if (handle) {
+		handle->SetRenderPlane(plane);
+	}
+	return true;
+}
+
+static bool SetZOffset(dyn_arg_list args) {
+	auto func = "text_set_z_offset";
+	bool okay;
+	std::string id;
+	int offset;
+	std::tie(id, offset) = DynRpg::ParseArgs<std::string, int>(func, args, &okay);
+	if (!okay) return true;
+	DynRpgText* handle = DynRpgText::GetTextHandle(id);
+	if (handle) {
+		handle->SetZOffset(offset);
+	}
+	return true;
+}
+
+static bool SetTexture(dyn_arg_list args) {
+	auto func = "text_set_texture";
+	bool okay;
+	std::string id, filename;
+	std::tie(id, filename) = DynRpg::ParseArgs<std::string, std::string>(func, args, &okay);
+	if (!okay) return true;
+	DynRpgText* handle = DynRpgText::GetTextHandle(id);
+	if (handle) {
+		handle->SetTexture(filename);
+	}
+	return true;
+}
+// --- END MODIFICATION ---
 
 bool DynRpg::TextPlugin::Invoke(std::string_view func, dyn_arg_list args, bool&, Game_Interpreter*) {
 	if (func == "write_text") {
@@ -415,6 +519,16 @@ bool DynRpg::TextPlugin::Invoke(std::string_view func, dyn_arg_list args, bool&,
 	} else if (func == "remove_all") {
 		return RemoveAll(args);
 	}
+	// --- MODIFICATION ---
+	// Add new commands to the chain
+	else if (func == "text_set_render_plane") {
+		return SetRenderPlane(args);
+	} else if (func == "text_set_z_offset") {
+		return SetZOffset(args);
+	} else if (func == "text_set_texture") {
+		return SetTexture(args);
+	}
+	// --- END MODIFICATION ---
 	return false;
 }
 
@@ -430,59 +544,32 @@ DynRpg::TextPlugin::~TextPlugin() {
 
 void DynRpg::TextPlugin::Load(const std::vector<uint8_t>& in_buffer) {
 	size_t counter = 0;
+	std::string str(reinterpret_cast<const char*>(in_buffer.data()), in_buffer.size());
+	std::vector<std::string> tokens = Utils::Tokenize(str, [](char32_t c) { return c == ','; });
 
-	std::string str((char*)in_buffer.data(), in_buffer.size());
-
-	std::vector<std::string> tokens = Utils::Tokenize(str, [&] (char32_t c) { return c == ','; });
-
-	int x = 0;
-	int y = 0;
+	int x = 0, y = 0, color = 0, pic_id = 1;
 	std::vector<std::string> texts;
-	int color = 0;
 	std::string id = "";
 	bool fixed = false;
-	int pic_id = 1;
 
 	for (auto& t : tokens) {
 		switch (counter) {
-			case 0:
-				x = atoi(t.c_str());
-				break;
-			case 1:
-				y = atoi(t.c_str());
-				break;
-			case 2:
-			{
-				// Replace sentinel \1 with ,
+			case 0: x = atoi(t.c_str()); break;
+			case 1: y = atoi(t.c_str()); break;
+			case 2: {
 				std::replace(t.begin(), t.end(), '\1', ',');
-
-				texts = Utils::Tokenize(t, [&] (char32_t c) { return c == '\n'; });
+				texts = Utils::Tokenize(t, [](char32_t c) { return c == '\n'; });
+				break;
 			}
-				break;
-			case 3:
-				color = atoi(t.c_str());
-				break;
-			case 4:
-				// ignore transparency, the picture defines this
-				break;
-			case 5:
-				fixed = t == "1";
-				break;
-			case 6:
-				pic_id = atoi(t.c_str());
-				break;
-			case 7:
-				id = t.c_str();
-				break;
-			default:
-				break;
+			case 3: color = atoi(t.c_str()); break;
+			case 4: /* ignore transparency */ break;
+			case 5: fixed = t == "1"; break;
+			case 6: pic_id = atoi(t.c_str()); break;
+			case 7: id = t; break;
 		}
-
-		++counter;
-
+		counter++;
 		if (counter == 8) {
 			counter = 0;
-
 			graphics[id] = std::make_unique<DynRpgText>(pic_id, x, y, texts);
 			texts.clear();
 			graphics[id]->SetColor(color);
@@ -494,15 +581,16 @@ void DynRpg::TextPlugin::Load(const std::vector<uint8_t>& in_buffer) {
 std::vector<uint8_t> DynRpg::TextPlugin::Save() {
 	std::vector<uint8_t> save_data;
 	std::stringstream ss;
-
+	bool first = true;
 	for (auto& g : graphics) {
+		if (!first) {
+			ss << ',';
+		}
 		std::vector<uint8_t> res = g.second->Save(g.first);
-		save_data.reserve(save_data.size() + res.size() + 1);
-		save_data.insert(save_data.end(), res.begin(), res.end());
-
-		save_data.push_back(',');
+		ss.write(reinterpret_cast<const char*>(res.data()), res.size());
+		first = false;
 	}
-	save_data.pop_back();
-
-	return DynRpgPlugin::Save();
+	std::string s = ss.str();
+	save_data.assign(s.begin(), s.end());
+	return save_data;
 }

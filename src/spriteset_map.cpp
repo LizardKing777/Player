@@ -36,6 +36,16 @@ Spriteset_Map::Spriteset_Map() {
 	panorama = std::make_unique<Plane>();
 	panorama->SetZ(Priority_Background);
 
+
+
+	doom_lower = std::make_unique<Plane>();
+	doom_upper = std::make_unique<Plane>();
+	doom_lower->SetZ(Priority_Background);
+	doom_upper->SetZ(Priority_BattleAnimation);
+
+
+
+
 	timer1 = std::make_unique<Sprite_Timer>(0);
 	timer2 = std::make_unique<Sprite_Timer>(1);
 
@@ -44,6 +54,9 @@ Spriteset_Map::Spriteset_Map() {
 	if (Player::IsRPG2k3()) {
 		frame = std::make_unique<Frame>();
 	}
+
+	//doom = new Spriteset_MapDoom();
+
 
 	ParallaxUpdated();
 
@@ -99,6 +112,62 @@ void Spriteset_Map::Update() {
 	panorama->SetOy(Game_Map::Parallax::GetY());
 	panorama->SetTone(new_tone);
 
+    bool is_m7 = Game_Map::GetIsMode7();
+
+    if (is_m7) {
+    panorama->SetVisible(false);
+    const auto& overlays = Game_Map::GetMode7Overlays();
+    float yaw = Game_Map::GetMode7Yaw();
+
+    // 1. Cleanup planes that are no longer in Game_Map
+    for (auto it = m7_overlay_planes.begin(); it != m7_overlay_planes.end(); ) {
+        if (overlays.find(it->first) == overlays.end()) {
+            m7_loaded_names.erase(it->first);
+            it = m7_overlay_planes.erase(it);
+        } else {
+            ++it;
+        }
+    }
+
+    // 2. Sync and Draw Layers
+    for (auto const& [slot, data] : overlays) {
+        // Load if name changed or doesn't exist
+        if (m7_loaded_names[slot] != data.name) {
+            m7_loaded_names[slot] = data.name;
+            m7_overlay_planes[slot] = std::make_unique<Plane>();
+            m7_overlay_planes[slot]->SetZ(Priority_Background);
+
+            // Re-use your Mode7 folder logic
+            FileRequestAsync* request = AsyncHandler::RequestFile("Mode7", data.name);
+            request->SetGraphicFile(true);
+            request->Start();
+
+            m7_overlay_planes[slot]->SetBitmap(Cache::Mode7(data.name));
+        }
+
+        auto* plane = m7_overlay_planes[slot].get();
+        if (plane && plane->GetBitmap()) {
+            plane->SetVisible(true);
+
+            int img_w = plane->GetBitmap()->GetWidth();
+
+            // --- CALCULATION ---
+            // Base rotation + the user defined anchor offset
+            float relative_yaw = (yaw * data.scroll_ratio);
+            float anchor_shift = (360.0f * data.anchor_percent);
+
+            int scroll_x = static_cast<int>(((relative_yaw + anchor_shift) / 360.0f) * img_w);
+
+            plane->SetOx(scroll_x);
+            plane->SetOy(-data.y_offset); // Negative because Y-up in screen space
+            plane->SetTone(new_tone);
+        }
+    }
+} else {
+    panorama->SetVisible(true);
+    for (auto& pair : m7_overlay_planes) pair.second->SetVisible(false);
+}
+
 	Game_Vehicle* vehicle;
 	int map_id = Game_Map::GetMapId();
 	for (int i = 1; i <= 3; ++i) {
@@ -116,6 +185,17 @@ void Spriteset_Map::Update() {
 	}
 
 	Main_Data::game_dynrpg->Update();
+
+
+
+	//doomUpdate();
+}
+
+void Spriteset_Map::doomUpdate() {
+	doom->Update(true);
+	doom_lower->SetBitmap(doom->sprite);
+	doom_upper->SetBitmap(doom->spriteUpper);
+
 }
 
 void Spriteset_Map::ChipsetUpdated() {
@@ -334,4 +414,105 @@ void Spriteset_Map::CalculatePanoramaRenderOffset() {
 			panorama->SetRenderOy((Player::screen_height - SCREEN_TARGET_HEIGHT) / 2);
 		}
 	}
+}
+
+
+
+BitmapRef Spriteset_Map::GetEventSprite(int evid) {
+
+	for (int i = 0;i< character_sprites.size();i++) {
+		bool setBmp = false;
+		if (character_sprites[i]->GetCharacter()->GetType() == Game_Character::Type::Event) {
+			int id = ((Game_Event*)character_sprites[i]->GetCharacter())->GetId();
+			if (id == evid) {
+				setBmp = true;
+			}
+		}
+		else if (character_sprites[i]->GetCharacter()->GetType() == Game_Character::Type::Player && evid == 0) {
+			setBmp = true;
+		}
+		if (setBmp) {
+			BitmapRef bitmap = character_sprites[i]->GetBitmap();
+			int DoomEventWidth = character_sprites[i]->GetWidth();
+			int DoomEventHeight = character_sprites[i]->GetHeight();
+			//BitmapRef b = Bitmap::Create(DoomEventWidth, DoomEventHeight, Color(0, 0, 0, 0));
+			BitmapRef b;
+			if (DoomEventWidth > 24 || DoomEventHeight > 32) {
+				b = Bitmap::Create(DoomEventWidth, DoomEventHeight, Color(0, 0, 0, 0));
+			}
+			else
+				b = Bitmap::Create(24, 32, Color(0, 0, 0, 0));
+			Rect r = character_sprites[i]->GetSrcRect();
+
+			// If it's not a tileSprite, and sprite isn't fixed, we need to calc the rotation
+			if (Main_Data::game_player->doomMoveType != 2 && Main_Data::game_player->GetDirection() > 0 && !character_sprites[i]->GetCharacter()->HasTileSprite()
+				&& character_sprites[i]->GetCharacter()->GetAnimationType() != Game_Character::AnimType::AnimType_fixed_continuous
+				&& character_sprites[i]->GetCharacter()->GetAnimationType() != Game_Character::AnimType::AnimType_fixed_graphic
+				&& character_sprites[i]->GetCharacter()->GetAnimationType() != Game_Character::AnimType::AnimType_fixed_non_continuous
+				&& character_sprites[i]->GetCharacter()->GetAnimationType() != Game_Character::AnimType::AnimType_spin
+				&& character_sprites[i]->GetCharacter()->GetAnimationType() != Game_Character::AnimType::AnimType_step_frame_fix) {
+				int data[3][4] = { {{3}, {-1}, {-1}, {-1}},
+					{{2}, {2}, {-2}, {-2}},
+					{{1}, {1}, {1}, {-3}}};
+
+				int d = data[Main_Data::game_player->GetDirection() - 1][character_sprites[i]->GetCharacter()->GetDirection()];
+
+				r.y += d * DoomEventHeight;
+				r.y = r.y % (DoomEventHeight * 4);
+
+			}
+
+			if (!character_sprites[i]->GetCharacter()->HasTileSprite()) {
+				if (character_sprites[i]->GetCharacter()->GetSpriteIndex() > 0)
+					r.x += (character_sprites[i]->GetCharacter()->GetSpriteIndex() * 72) % 288;
+				if (character_sprites[i]->GetCharacter()->GetSpriteIndex() >= 4)
+					r.y += DoomEventHeight * 4;
+			}
+
+			b->Blit(0, 0, *bitmap, r, 255);
+			return b;
+		}
+
+	}
+
+	return nullptr;
+}
+
+BitmapRef Spriteset_Map::GetVehicleSprite(int vehicleType) {
+	for (const auto& sprite : character_sprites) {
+		Game_Character* character = sprite->GetCharacter();
+		if (character->GetType() == Game_Character::Type::Vehicle) {
+			auto* vehicle = static_cast<Game_Vehicle*>(character);
+			if (vehicle->GetVehicleType() == vehicleType) {
+				BitmapRef bitmap = sprite->GetBitmap();
+				if (!bitmap) return nullptr;
+
+				// Create a new bitmap to hold just the current animation frame of the vehicle
+				BitmapRef b = Bitmap::Create(sprite->GetWidth(), sprite->GetHeight(), true);
+				Rect r = sprite->GetSrcRect();
+
+				b->Blit(0, 0, *bitmap, r, 255);
+				return b;
+			}
+		}
+	}
+	return nullptr;
+}
+
+
+BitmapRef Spriteset_Map::GetChipset() {
+	return tilemap->GetChipset();
+}
+
+
+BitmapRef Spriteset_Map::GetTile(int x, int y, int layer) {
+	return tilemap->GetTile(x, y, layer);
+}
+
+int Spriteset_Map::GetTileID(int x, int y, int layer) {
+	return tilemap->GetTileID(x, y, layer);
+}
+
+TilemapLayer* Spriteset_Map::GetTilemap(int i) {
+	return tilemap->GetTilemap(i);
 }

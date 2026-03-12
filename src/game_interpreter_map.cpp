@@ -696,26 +696,45 @@ bool Game_Interpreter_Map::CommandPanScreen(lcf::rpg::EventCommand const& com) {
 	return true;
 }
 
-bool Game_Interpreter_Map::CommandShowBattleAnimation(lcf::rpg::EventCommand const& com) { // code 11210
-	int animation_id = com.parameters[0];
-	int evt_id = com.parameters[1];
-	bool waiting_battle_anim = com.parameters[2] > 0;
-	bool global = com.parameters[3] > 0;
+bool Game_Interpreter_Map::CommandShowBattleAnimation(lcf::rpg::EventCommand const& com) {
+    int animation_id = com.parameters[0];
+    int evt_id = com.parameters[1];
+    bool waiting_battle_anim = com.parameters[2] > 0;
+    bool global = com.parameters[3] > 0;
 
-	Game_Character* chara = GetCharacter(evt_id, "ShowBattleAnimation");
-	if (chara == NULL)
-		return true;
+    int x = 0;
+    int y = 0;
 
-	if (evt_id == Game_Character::CharThisEvent)
-		evt_id = GetThisEventId();
+    // Check if this is a specific Maniacs Patch "Fixed Position" call.
+    // This uses ID 0 specifically to mean "Use X/Y coordinates".
+    bool is_maniac_fixed_pos = (Player::IsPatchManiac() && com.parameters.size() >= 6 && evt_id == 0);
 
-	int frames = Main_Data::game_screen->ShowBattleAnimation(animation_id, evt_id, global);
+    if (is_maniac_fixed_pos) {
+        // In Maniacs Mode with ID 0, read the coordinates.
+        // We leave evt_id as 0 so Game_Screen passes a nullptr character
+        // to BattleAnimationMap, forcing it to use these X/Y coords.
+        x = com.parameters[4];
+        y = com.parameters[5];
 
-	if (waiting_battle_anim) {
-		_state.wait_time = frames;
-	}
+        global = false;
+    }
+    else {
+        // Standard Behavior:
+        // If ID is 0 (and NOT Maniacs) or 10005, it means "This Event".
+        // We must resolve 0 to the actual Event ID so the animation follows the event.
+        if (evt_id == 0 || evt_id == Game_Character::CharThisEvent) {
+            evt_id = GetThisEventId();
+        }
+    }
 
-	return true;
+    // Pass the resolved evt_id and the coordinates (which are only used if evt_id is 0)
+    int frames = Main_Data::game_screen->ShowBattleAnimation(animation_id, evt_id, global, 0, x, y);
+
+    if (waiting_battle_anim) {
+        _state.wait_time = frames;
+    }
+
+    return true;
 }
 
 bool Game_Interpreter_Map::CommandFlashSprite(lcf::rpg::EventCommand const& com) { // code 11320

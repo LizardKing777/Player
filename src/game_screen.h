@@ -120,7 +120,7 @@ public:
 	 *
 	 * @return the number of frames the animation will run.
 	 */
-	int ShowBattleAnimation(int animation_id, int target_id, bool global, int start_frame = 0);
+    int ShowBattleAnimation(int animation_id, int target_id, bool global, int start_frame = 0, int x = 0, int y = 0);
 
 	/**
 	 * Update the currently running battle animation by 1 frame.

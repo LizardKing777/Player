@@ -1,19 +1,6 @@
-/*
- * This file is part of EasyRPG Player.
- *
- * EasyRPG Player is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * EasyRPG Player is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with EasyRPG Player. If not, see <http://www.gnu.org/licenses/>.
- */
+/*start of file .\player.cpp*/
+
+/* ... license chunk ... */
 
 // Headers
 #include <algorithm>
@@ -554,16 +541,6 @@ Game_Config Player::ParseCommandLine() {
 			}
 			continue;
 		}
-		if (cp.ParseNext(arg, 1, "--language-path") && arg.NumValues() > 0) {
-			if (arg.NumValues() > 0) {
-				auto langfs = FileFinder::Root().Create(FileFinder::MakeCanonical(arg.Value(0), 0));
-				if (!langfs) {
-					Output::Error("Invalid --language-path {}", arg.Value(0));
-				}
-				FileFinder::SetLanguageFilesystem(langfs);
-			}
-			continue;
-		}
 		if (cp.ParseNext(arg, 1, "--save-path")) {
 			if (arg.NumValues() > 0) {
 				auto savefs = FileFinder::Root().Create(FileFinder::MakeCanonical(arg.Value(0), 0));
@@ -786,10 +763,10 @@ void Player::CreateGameObjects() {
 		if (engine == EngineNone) {
 			auto version_info = exe_reader->GetFileInfo();
 			version_info.Print();
-			int maniac_patch_version;
-			engine = version_info.GetEngineType(maniac_patch_version);
+			bool is_patch_maniac;
+			engine = version_info.GetEngineType(is_patch_maniac);
 			if (!game_config.patch_override) {
-				game_config.patch_maniac.Set(maniac_patch_version);
+				game_config.patch_maniac.Set(is_patch_maniac);
 			}
 		}
 
@@ -839,8 +816,8 @@ void Player::CreateGameObjects() {
 			Output::Debug("This game uses DynRPG. Depending on the plugins used it will not run properly.");
 		}
 
-		if (!FileFinder::Game().FindFile("accord.dll").empty() && !Player::IsPatchManiac()) {
-			game_config.patch_maniac.Set(1);
+		if (!FileFinder::Game().FindFile("accord.dll").empty()) {
+			game_config.patch_maniac.Set(true);
 		}
 
 		if (!FileFinder::Game().FindFile(DESTINY_DLL).empty()) {
@@ -929,24 +906,27 @@ void Player::ResetGameObjects() {
 
 	auto min_var = lcf::Data::system.easyrpg_variable_min_value;
 	if (min_var == 0) {
-		if (!Player::IsPatchManiac() || Player::game_config.patch_maniac.Get() == 2) {
-			min_var = Player::IsRPG2k3() ? Game_Variables::min_2k3 : Game_Variables::min_2k;
-		} else {
+		if ((Player::game_config.patch_maniac.Get() & 1) == 1) {
 			min_var = std::numeric_limits<Game_Variables::Var_t>::min();
+		} else {
+			min_var = Player::IsRPG2k3() ? Game_Variables::min_2k3 : Game_Variables::min_2k;
 		}
 	}
 	auto max_var = lcf::Data::system.easyrpg_variable_max_value;
 	if (max_var == 0) {
-		if (!Player::IsPatchManiac() || Player::game_config.patch_maniac.Get() == 2) {
-			max_var = Player::IsRPG2k3() ? Game_Variables::max_2k3 : Game_Variables::max_2k;
-		} else {
+		if ((Player::game_config.patch_maniac.Get() & 1) == 1) {
 			max_var = std::numeric_limits<Game_Variables::Var_t>::max();
+		} else {
+			max_var = Player::IsRPG2k3() ? Game_Variables::max_2k3 : Game_Variables::max_2k;
 		}
 	}
 	Main_Data::game_variables = std::make_unique<Game_Variables>(min_var, max_var);
 	Main_Data::game_variables->SetLowerLimit(lcf::Data::variables.size());
 
 	Main_Data::game_strings = std::make_unique<Game_Strings>();
+
+    // Create System early
+    Main_Data::game_system = std::make_unique<Game_System>();
 
 	// Prevent a crash when Game_Map wants to reset the screen content
 	// because Setup() modified pictures array
@@ -958,7 +938,6 @@ void Player::ResetGameObjects() {
 
 	Game_Map::Init();
 
-	Main_Data::game_system = std::make_unique<Game_System>();
 	Main_Data::game_targets = std::make_unique<Game_Targets>();
 	Main_Data::game_enemyparty = std::make_unique<Game_EnemyParty>();
 	Main_Data::game_party = std::make_unique<Game_Party>();
@@ -1459,8 +1438,6 @@ Engine options:
  --font-path PATH     The path in which the settings scene looks for fonts.
                       The default is config-path/Font.
  --language LANG      Load the game translation in language/LANG folder.
- --language-path PATH Use the translations at PATH instead of the translations
-                      in the language folder.
  --load-game-id N     Skip the title scene and load SaveN.lsd (N is padded to
                       two digits).
  --log-file FILE      Path to the logfile. The Player will write diagnostic

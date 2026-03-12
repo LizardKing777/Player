@@ -49,6 +49,15 @@ public:
 
 	std::unique_ptr<Spriteset_Map> spriteset;
 
+
+
+	BitmapRef GetEventSprite(int i);
+	BitmapRef GetChipset();
+	BitmapRef GetTile(int x, int y, int layer);
+	int GetTileID(int x, int y, int layer);
+	TilemapLayer* GetTilemap(int i);
+
+
 private:
 	enum TeleportTransitionRule {
 		eTransitionNormal,

@@ -55,6 +55,8 @@ namespace Cache {
 	BitmapRef System(std::string_view filename, bool bg_preserve_transparent_color = false);
 	BitmapRef System2(std::string_view filename);
 
+	BitmapRef Mode7(std::string_view file);
+
 	BitmapRef Tile(std::string_view filename, int tile_id);
 	BitmapRef SpriteEffect(const BitmapRef& src_bitmap, const Rect& rect, bool flip_x, bool flip_y, const Tone& tone, const Color& blend);
 

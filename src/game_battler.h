@@ -445,6 +445,20 @@ public:
 	bool IsHidden() const;
 	virtual bool IsImmortal() const;
 
+    float GetCustomZoom() const { return custom_zoom; }
+    void SetCustomZoom(float z) { custom_zoom = z; }
+
+    bool IsProxyHidden() const { return is_proxy_hidden; }
+    void SetProxyHidden(bool v) { is_proxy_hidden = v; }
+
+    int GetCustomOpacity() const { return custom_opacity; }
+    void SetCustomOpacity(int o) { custom_opacity = o; }
+
+    float GetCustomAngle() const { return custom_angle; }
+    void SetCustomAngle(float a) { custom_angle = a; }
+
+
+
 	int GetAtkModifier() const;
 	int GetDefModifier() const;
 	int GetSpiModifier() const;
@@ -959,6 +973,13 @@ protected:
 	bool charged = false;
 	bool hidden = false;
 	bool direction_flipped = false;
+
+    float custom_zoom = 1.0f;
+    bool is_proxy_hidden = false;
+    int custom_opacity = 255;
+
+    float custom_angle = 0.0f;
+
 
 	std::unique_ptr<Sprite_Battler> battle_sprite;
 	std::unique_ptr<Sprite_Weapon> weapon_sprite;
