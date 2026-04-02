@@ -1,8 +1,18 @@
 /*
  * This file is part of EasyRPG Player.
- * ... (license header) ...
- * This file has been refactored for clarity, modern C++, to fix bugs
- * from the original porting effort, and to add Mode 7 support.
+ *
+ * EasyRPG Player is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * EasyRPG Player is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with EasyRPG Player. If not, see .
  */
 
 // Headers
@@ -52,6 +62,8 @@ public:
 
 	ParticleEffect();
 	~ParticleEffect() override;
+
+	virtual void Update() = 0;
 	void Draw(Bitmap& dst) override {};
 
 	// Determines if input coordinates are relative to the screen (true) or map (false)
@@ -192,7 +204,7 @@ void ParticleEffect::setTexture(std::string filename) {
 void ParticleEffect::unloadTexture() {
 	image = Bitmap::Create(1, 1, true);
 	hasTexture = false;
-	linear_fade(this, color0, color1, fade, delay);
+	update_color();
 }
 
 void ParticleEffect::setGravityDirection(float angle, float factor) {
@@ -207,9 +219,9 @@ void ParticleEffect::setAccelerationPoint(float x, float y, float factor) {
 		ax0 = x + Game_Map::GetDisplayX() / 16;
 		ay0 = y + Game_Map::GetDisplayY() / 16;
 	} else {
-	ax0 = x;
-	ay0 = y;
-}
+		ax0 = x;
+		ay0 = y;
+	}
 }
 
 void ParticleEffect::setGrowth(float ini_size, float end_size) {
@@ -233,8 +245,8 @@ void ParticleEffect::setAngle(float v1, float v2) {
 	alpha = v1 - v2 / 2;
 	// Auto-detect screen space effect if 360 degree emission
 	if (beta == 0.0f) {
-        isScreenSpaceEffect = true;
-    }
+		isScreenSpaceEffect = true;
+	}
 }
 
 void ParticleEffect::setSecondaryAngle(float v) {
@@ -311,7 +323,6 @@ void ParticleEffect::setLayer(int layer) {
 	// The final Z value, including offsets, will be set in the Draw method.
 }
 
-
 void ParticleEffect::update_color() {
 	linear_fade(this, color0, color1, fade, delay);
 }
@@ -322,10 +333,12 @@ void ParticleEffect::create_trig_lut() {
 		sin_lut[i] = sin(dr * i);
 }
 
+
 class Stream : public ParticleEffect {
 public:
 	Stream();
-	~Stream() = default;
+	~Stream() override = default;
+	void Update() override;
 	void Draw(Bitmap& dst) override;
 	void clear() override;
 	void stopAll();
@@ -339,27 +352,21 @@ public:
 	void setPosition(std::string tag, int x, int y);
 
 private:
-	uint8_t simulBeg;
-	uint8_t simulRun;
-	uint8_t simulCnt;
+	uint16_t simulBeg;
+	uint16_t simulRun;
+	uint16_t simulCnt;
 	uint16_t simulMax;
 
-	std::vector<float> x;
-	std::vector<float> y;
-	std::vector<float> s;
-	std::vector<float> dx;
-	std::vector<float> dy;
-	std::vector<uint8_t> itr;
-	std::vector<int16_t> str_x;
-	std::vector<int16_t> str_y;
-	std::vector<uint8_t> pfx_ref;
-	std::vector<uint8_t> end_cnt;
+	std::vector<float> x, y, s, dx, dy;
+	std::vector<uint8_t> itr, end_cnt;
+	std::vector<int16_t> str_x, str_y;
+	std::vector<uint16_t> pfx_ref;
 
 	std::map<std::string, int> pfx_tag;
 
-	void resize();
-	void stream_to_end(uint8_t idx);
-	void start_to_stream(uint8_t idx);
+	void reallocate(bool preserve);
+	void stream_to_end(uint16_t idx);
+	void start_to_stream(uint16_t idx);
 
 	void (Stream::*init)(int, int, int);
 	void draw_block(Bitmap& dst, int, uint8_t, uint8_t, uint8_t, int16_t, int16_t);
@@ -370,14 +377,55 @@ private:
 
 Stream::Stream() : ParticleEffect(), simulBeg(0), simulRun(0), simulCnt(0), simulMax(1) {
 	amount = 10;
-	resize();
+	reallocate(false);
 	init = &Stream::init_basic;
 	update_color();
 }
 
+void Stream::reallocate(bool preserve) {
+	size_t pool_size = static_cast<size_t>(amount) * fade * simulMax;
+	if (!preserve) {
+		x.assign(pool_size, 0.0f);
+		y.assign(pool_size, 0.0f);
+		s.assign(pool_size, 0.0f);
+		dx.assign(pool_size, 0.0f);
+		dy.assign(pool_size, 0.0f);
+		itr.assign(simulMax, 0);
+		str_x.assign(simulMax, 0);
+		str_y.assign(simulMax, 0);
+		pfx_ref.resize(simulMax);
+		for (uint16_t i = 0; i < simulMax; i++) {
+			pfx_ref[i] = i;
+		}
+		end_cnt.assign(simulMax, 0);
+		simulBeg = 0;
+		simulRun = 0;
+		simulCnt = 0;
+		pfx_tag.clear();
+	} else {
+		x.resize(pool_size, 0.0f);
+		y.resize(pool_size, 0.0f);
+		s.resize(pool_size, 0.0f);
+		dx.resize(pool_size, 0.0f);
+		dy.resize(pool_size, 0.0f);
+		itr.resize(simulMax, 0);
+		str_x.resize(simulMax, 0);
+		str_y.resize(simulMax, 0);
+		size_t old_simulMax = pfx_ref.size();
+		pfx_ref.resize(simulMax);
+		for (uint16_t i = old_simulMax; i < simulMax; i++) {
+			pfx_ref[i] = i;
+		}
+		end_cnt.resize(simulMax, 0);
+	}
+}
+
 void Stream::start(int x0, int y0, std::string tag) {
 	if (pfx_tag.count(tag)) return;
-	if (simulCnt >= simulMax) resize();
+	if (simulCnt >= simulMax) {
+		simulMax *= 2;
+		reallocate(true);
+	}
 
 	// Convert Screen coordinate to World coordinate if this is a screen-space effect (e.g. Radial)
 	// This ensures that when rendered in Mode7, the effect appears at the correct map location
@@ -386,7 +434,7 @@ void Stream::start(int x0, int y0, std::string tag) {
 		y0 += Game_Map::GetDisplayY() / 16;
 	}
 
-	uint8_t idx = pfx_ref[simulCnt];
+	uint16_t idx = pfx_ref[simulCnt];
 
 	std::swap(pfx_ref[simulCnt], pfx_ref[simulRun]);
 	std::swap(pfx_ref[simulRun], pfx_ref[simulBeg]);
@@ -481,6 +529,144 @@ void Stream::init_radial(int a, int b, int idx) {
 		p = (tmp_angle + theta - v * 0.1963495408) / 0.1963495408;
 		dx[i] = -tmp_spd * (sin_lut[(v + 9) & 31] * p + sin_lut[(v + 8) & 31] * (1 - p));
 		dy[i] = -tmp_spd * (sin_lut[(v + 1) & 31] * p + sin_lut[(v + 0) & 31] * (1 - p));
+	}
+}
+
+void Stream::setPosition(std::string tag, int x_pos, int y_pos) {
+	auto pfx_itr = pfx_tag.find(tag);
+	if (pfx_itr == pfx_tag.end()) return;
+	uint8_t probe = pfx_itr->second;
+
+	auto it = std::find(pfx_ref.begin(), pfx_ref.begin() + simulCnt, probe);
+	if (it == pfx_ref.begin() + simulCnt) return;
+	auto i = std::distance(pfx_ref.begin(), it);
+	str_x[pfx_ref[i]] = x_pos;
+	str_y[pfx_ref[i]] = y_pos;
+}
+
+void Stream::setAmount(int newAmount) {
+	amount = newAmount;
+	reallocate(false);
+}
+
+void Stream::setSimul(int newSimul) {
+	simulMax = newSimul;
+	reallocate(false);
+}
+
+void Stream::setTimeout(int _fade, int _delay) {
+	ParticleEffect::setTimeout(_fade, _delay);
+	reallocate(false);
+}
+
+void Stream::Update() {
+	if (simulCnt <= 0) return;
+
+	int block_size = amount * fade;
+
+	// --- Physics Update Section ---
+	for (int i = 0; i < simulCnt; ++i) {
+		uint16_t p_ref = pfx_ref[i];
+		int base_idx = p_ref * block_size;
+		for (int j = 0; j < block_size; ++j) {
+			int p_idx = base_idx + j;
+			x[p_idx] += dx[p_idx];
+			y[p_idx] += dy[p_idx];
+			float tx = ax0 - x[p_idx];
+			float ty = ay0 - y[p_idx];
+			float tsqr = sqrtf(tx*tx + ty*ty + 0.001);
+			dx[p_idx] += gx + afc * tx / tsqr;
+			dy[p_idx] += gy + afc * ty / tsqr;
+			s[p_idx] += ds;
+		}
+	}
+
+	// --- Spawning Section ---
+	--cur_interval;
+	if (cur_interval == 0) {
+		for (int i = simulBeg; i < simulRun; i++) {
+			uint16_t idx = pfx_ref[i];
+			uint8_t z = fade - itr[idx] - 1;
+			(this->*init)(z * amount + idx * block_size, (z + 1) * amount + idx * block_size, idx);
+		}
+		cur_interval = interval;
+	}
+
+	// --- State Update Section ---
+	// Starting
+	for (int i = 0; i < simulBeg; i++) {
+		uint16_t idx = pfx_ref[i];
+		if (itr[idx] < fade) {
+			uint8_t z = fade - itr[idx] - 1;
+			(this->*init)(z * amount + idx * block_size, (z + 1) * amount + idx * block_size, idx);
+			itr[idx]++;
+		}
+		else {
+			start_to_stream(i--);
+		}
+	}
+
+	// Streaming
+	for (int i = simulBeg; i < simulRun; i++) {
+		uint16_t idx = pfx_ref[i];
+		itr[idx] = (itr[idx] + 1) % fade;
+	}
+
+	// Stopping
+	for (int i = simulRun; i < simulCnt; i++) {
+		uint16_t idx = pfx_ref[i];
+		if (end_cnt[idx] == 0) {
+			stream_to_end(i--);
+		} else {
+			end_cnt[idx]--;
+		}
+	}
+}
+
+void Stream::Draw(Bitmap& dst) {
+	if (simulCnt <= 0) return;
+
+	int cam_x = (isScreenRelative) ? 0 : Game_Map::GetDisplayX() / 16;
+	int cam_y = (isScreenRelative) ? 0 : Game_Map::GetDisplayY() / 16;
+	int block_size = amount * fade;
+
+	if (Game_Map::GetIsMode7() && renderType == RenderType::Sprite && !isScreenRelative) {
+		if (simulCnt > 0) {
+			uint8_t p_ref = pfx_ref[0];
+			int input_x = str_x[p_ref] - cam_x;
+			int input_y = str_y[p_ref] - cam_y;
+			auto transform = Game_Map::TransformToMode7(input_x, input_y);
+			Drawable::Z_t z = base_z + z_offset;
+
+			if (transform.zoom > 0) {
+				z += (static_cast<Drawable::Z_t>(transform.screen_y) + 0x8000) << 32;
+				z += (static_cast<Drawable::Z_t>(transform.screen_x) + 0x8000) << 16;
+			}
+			SetZ(z);
+		}
+	} else {
+		SetZ(Priority_BattleAnimation + z_offset);
+	}
+
+	// Starting
+	for (int i = 0; i < simulBeg; i++) {
+		uint16_t idx = pfx_ref[i];
+		uint8_t count = itr[idx];
+		uint8_t z = fade - count;
+		draw_block(dst, idx * block_size, count, z, 0, cam_x, cam_y);
+	}
+	// Streaming
+	for (int i = simulBeg; i < simulRun; i++) {
+		uint16_t idx = pfx_ref[i];
+		uint8_t z_old = (fade - itr[idx]) % fade;
+		draw_block(dst, idx * block_size, fade, z_old, 0, cam_x, cam_y);
+	}
+	// Stopping
+	for (int i = simulRun; i < simulCnt; i++) {
+		uint16_t idx = pfx_ref[i];
+		uint8_t count = end_cnt[idx] + 1;
+		uint8_t z_old = (fade - itr[idx]) % fade;
+		draw_block(dst, idx * block_size, count, z_old, fade - count, cam_x, cam_y);
 	}
 }
 
@@ -612,166 +798,13 @@ void Stream::draw_block(Bitmap& dst, int ref, uint8_t n, uint8_t z, uint8_t c0, 
 	}
 }
 
-void Stream::setPosition(std::string tag, int x_pos, int y_pos) {
-	auto pfx_itr = pfx_tag.find(tag);
-	if (pfx_itr == pfx_tag.end()) return;
-	uint8_t probe = pfx_itr->second;
-
-	auto it = std::find(pfx_ref.begin(), pfx_ref.begin() + simulCnt, probe);
-	if (it == pfx_ref.begin() + simulCnt) return;
-	auto i = std::distance(pfx_ref.begin(), it);
-	str_x[i] = x_pos;
-	str_y[i] = y_pos;
-}
-
-void Stream::Draw(Bitmap& dst) {
-	if (simulCnt <= 0) return;
-	int cam_x = (isScreenRelative) ? 0 : Game_Map::GetDisplayX() / 16;
-	int cam_y = (isScreenRelative) ? 0 : Game_Map::GetDisplayY() / 16;
-	int block_size = amount * fade;
-
-	// --- Physics Update Section ---
-	for (int i = 0; i < simulCnt; ++i) {
-		uint8_t p_ref = pfx_ref[i];
-		int base_idx = p_ref * block_size;
-		for (int j = 0; j < block_size; ++j) {
-			int p_idx = base_idx + j;
-			x[p_idx] += dx[p_idx];
-			y[p_idx] += dy[p_idx];
-			float tx = ax0 - x[p_idx];
-			float ty = ay0 - y[p_idx];
-			float tsqr = sqrtf(tx*tx + ty*ty + 0.001);
-			dx[p_idx] += gx + afc * tx / tsqr;
-			dy[p_idx] += gy + afc * ty / tsqr;
-			s[p_idx] += ds;
-		}
-	}
-
-	// --- Spawning Section ---
-	--cur_interval;
-	if (cur_interval == 0) {
-		for (int i = simulBeg; i < simulRun; i++) {
-			uint8_t idx = pfx_ref[i];
-			uint8_t z = fade - itr[idx] - 1;
-			(this->*init)(z * amount + idx * block_size, (z + 1) * amount + idx * block_size, idx);
-		}
-		cur_interval = interval;
-	}
-
-	// --- Drawing & Z-Update Section ---
-	if (Game_Map::GetIsMode7() && renderType == RenderType::Sprite && !isScreenRelative) {
-		for (int i = 0; i < simulCnt; ++i) {
-			uint8_t p_ref = pfx_ref[i];
-			int input_x = str_x[p_ref] - cam_x;
-			int input_y = str_y[p_ref] - cam_y;
-			auto transform = Game_Map::TransformToMode7(input_x, input_y);
-			Drawable::Z_t z = base_z + z_offset;
-
-			// If transformed Y is valid, use it for Z-order, otherwise use max to keep it "behind" things
-			// but we still want it to render if possible via the recovery logic.
-			if (transform.zoom > 0) {
-				z += (static_cast<Drawable::Z_t>(transform.screen_y) + 0x8000) << 32;
-				z += (static_cast<Drawable::Z_t>(transform.screen_x) + 0x8000) << 16;
-			} else {
-				// Fallback Z: Force it to appear behind standard layers if clipped
-				// or keep previous valid Z? We'll just assume standard priority.
-			}
-
-			z += z_offset;
-			SetZ(z);
-		}
-	} else {
-		// 2D Mode Fix:
-		// When not in Mode 7, we must use a higher priority layer (BattleAnimation)
-		// so particles draw over map events. Base_z (Priority_Player) causes them
-		// to sort behind events in 2D due to how events calculate their Z based on Y-coord.
-		SetZ(Priority_BattleAnimation + z_offset);
-	}
-
-	int i = 0;
-	// Starting
-	for (; i < simulBeg; i++) {
-		uint8_t idx = pfx_ref[i];
-		if (itr[idx] < fade) {
-			uint8_t z = fade - itr[idx] - 1;
-			(this->*init)(z * amount + idx * block_size, (z + 1) * amount + idx * block_size, idx);
-
-			itr[idx]++;
-			draw_block(dst, idx * block_size, itr[idx], z, 0, cam_x, cam_y);
-		}
-		else start_to_stream(i--);
-	}
-	// Streaming
-	for (; i < simulRun; i++) {
-		uint8_t idx = pfx_ref[i];
-		uint8_t z = fade - itr[idx] - 1;
-		itr[idx] = (itr[idx] + 1) % fade;
-		draw_block(dst, idx * block_size, fade, z, 0, cam_x, cam_y);
-	}
-	// Stopping
-	for (; i < simulCnt; i++) {
-		uint8_t idx = pfx_ref[i];
-		uint8_t z = (fade - itr[idx]) % fade;
-		draw_block(dst, idx * block_size, end_cnt[idx]--, z, fade - end_cnt[idx], cam_x, cam_y);
-		if (end_cnt[idx] <= 0)
-			stream_to_end(i);
-	}
-}
-
-void Stream::resize() {
-	simulMax *= 2;
-	size_t particle_pool_size = static_cast<size_t>(amount) * fade * simulMax;
-
-	x.resize(particle_pool_size);
-	y.resize(particle_pool_size);
-	s.resize(particle_pool_size);
-	dx.resize(particle_pool_size);
-	dy.resize(particle_pool_size);
-
-	itr.resize(simulMax);
-	str_x.resize(simulMax);
-	str_y.resize(simulMax);
-	pfx_ref.resize(simulMax);
-	end_cnt.resize(simulMax);
-
-	for (int i = simulMax / 2; i < simulMax; i++) {
-		pfx_ref[i] = i;
-	}
-}
-
-void Stream::setAmount(int newAmount) {
-	amount = newAmount;
-	resize();
-}
-
-void Stream::setSimul(int newSimul) {
-	simulMax = newSimul;
-	resize();
-	simulBeg = 0;
-	simulRun = 0;
-	simulCnt = 0;
-}
-
-void Stream::setTimeout(int _fade, int _delay) {
-	if (_fade > 255) _fade = 255;
-	else if (_fade <= 0) _fade = 1;
-	if (_delay >= _fade) _delay = _fade - 1;
-	else if (_delay < 0) _delay = 0;
-	fade = _fade;
-	delay = _delay;
-	da = 255.0f / _fade;
-	ds = (s1 - s0) / _fade;
-	resize();
-	update_color();
-}
-
-void Stream::start_to_stream(uint8_t idx) {
+void Stream::start_to_stream(uint16_t idx) {
 	itr[pfx_ref[idx]] = 0;
 	--simulBeg;
 	std::swap(pfx_ref[simulBeg], pfx_ref[idx]);
 }
 
-void Stream::stream_to_end(uint8_t idx) {
+void Stream::stream_to_end(uint16_t idx) {
 	--simulCnt;
 	std::swap(pfx_ref[simulCnt], pfx_ref[idx]);
 }
@@ -779,56 +812,87 @@ void Stream::stream_to_end(uint8_t idx) {
 class Burst : public ParticleEffect {
 public:
 	Burst();
-	~Burst() = default;
+	~Burst() override = default;
+
+	void Update() override;
 	void Draw(Bitmap& dst) override;
 	void clear() override;
 	void newBurst(int x, int y);
 
 	void setSimul(int newSimul) override;
 	void setAmount(int newAmount) override;
+	void setTimeout(int fade, int delay) override;
 	void setGeneratingFunction(std::string type) override;
 
 private:
-	uint8_t simulCnt;
+	uint16_t simulCnt;
 	uint16_t simulMax;
 
-	std::vector<float> x;
-	std::vector<float> y;
-	std::vector<float> s;
-	std::vector<float> dx;
-	std::vector<float> dy;
+	std::vector<float> x, y, s, dx, dy;
 	std::vector<uint8_t> itr;
 	std::vector<PointF> origins;
 
-	void resize();
+	void reallocate(bool preserve);
 
 	void (Burst::*init)(int, int, int, int);
-	void (Burst::*draw_function)(Bitmap& dst, int, int);
 
 	void init_basic(int x0, int y0, int a, int b);
 	void init_radial(int x0, int y0, int a, int b);
-	void draw_standard(Bitmap& dst, int cam_x, int cam_y);
 };
 
 Burst::Burst() : ParticleEffect(), simulCnt(0), simulMax(1) {
-	resize();
+	reallocate(false);
 	init = &Burst::init_basic;
-	draw_function = &Burst::draw_standard;
 	update_color();
+}
+
+void Burst::reallocate(bool preserve) {
+	size_t pool_size = static_cast<size_t>(amount) * simulMax;
+	if (!preserve) {
+		x.assign(pool_size, 0.0f);
+		y.assign(pool_size, 0.0f);
+		s.assign(pool_size, 0.0f);
+		dx.assign(pool_size, 0.0f);
+		dy.assign(pool_size, 0.0f);
+		itr.assign(simulMax, 0);
+		origins.assign(simulMax, {0.0f, 0.0f});
+		simulCnt = 0;
+	} else {
+		x.resize(pool_size, 0.0f);
+		y.resize(pool_size, 0.0f);
+		s.resize(pool_size, 0.0f);
+		dx.resize(pool_size, 0.0f);
+		dy.resize(pool_size, 0.0f);
+		itr.resize(simulMax, 0);
+		origins.resize(simulMax, {0.0f, 0.0f});
+	}
+}
+
+void Burst::setAmount(int newAmount) {
+	amount = newAmount;
+	reallocate(false);
+}
+
+void Burst::setSimul(int newSimul) {
+	simulMax = newSimul;
+	reallocate(false);
+}
+
+void Burst::setTimeout(int new_fade, int new_delay) {
+	ParticleEffect::setTimeout(new_fade, new_delay);
+	reallocate(false);
 }
 
 void Burst::setGeneratingFunction(std::string type) {
 	std::transform(type.begin(), type.end(), type.begin(), ::tolower);
 	if (!type.substr(0, 8).compare("standard")) {
 		init = &Burst::init_basic;
-		// Standard: Input is Map/World coordinates, defaults to Map Plane
 		isScreenSpaceEffect = false;
 		renderType = RenderType::Map;
 		return;
 	}
 	if (!type.substr(0, 6).compare("radial")) {
 		init = &Burst::init_radial;
-		// Radial: Input is Screen coordinates, defaults to Screen Plane (Overlay)
 		isScreenSpaceEffect = true;
 		renderType = RenderType::Screen;
 		return;
@@ -840,7 +904,10 @@ void Burst::clear() {
 }
 
 void Burst::newBurst(int x0, int y0) {
-	if (simulCnt >= simulMax) resize();
+	if (simulCnt >= simulMax) {
+		simulMax *= 2;
+		reallocate(true);
+	}
 
 	if (Game_Map::GetIsMode7() && !isScreenRelative && isScreenSpaceEffect) {
 		x0 += Game_Map::GetDisplayX() / 16;
@@ -888,14 +955,28 @@ void Burst::init_radial(int x0, int y0, int a, int b) {
 	}
 }
 
-void Burst::draw_standard(Bitmap& dst, int cam_x, int cam_y) {
-	for (int i = 0; i < simulCnt; i++) {
-		int age = itr[i];
-		if (age >= fade) continue;
+void Burst::Update() {
+	if (simulCnt <= 0) return;
+
+	for (int i = 0; i < simulCnt; ++i) {
+		if (itr[i] >= fade) {
+			simulCnt--;
+			if (i < simulCnt) {
+				size_t dead_offset = i * amount;
+				size_t last_offset = simulCnt * amount;
+				std::copy_n(&x[last_offset], amount, &x[dead_offset]);
+				std::copy_n(&y[last_offset], amount, &y[dead_offset]);
+				std::copy_n(&s[last_offset], amount, &s[dead_offset]);
+				std::copy_n(&dx[last_offset], amount, &dx[dead_offset]);
+				std::copy_n(&dy[last_offset], amount, &dy[dead_offset]);
+				itr[i] = itr[simulCnt];
+				origins[i] = origins[simulCnt];
+			}
+			--i;
+			continue;
+		}
 
 		itr[i]++;
-		int alpha = static_cast<int>(255 - da * age);
-		Color color = palette[age];
 
 		float tx, ty, tsqr;
 		for (int j = i * amount; j < (i + 1) * amount; j++) {
@@ -907,73 +988,21 @@ void Burst::draw_standard(Bitmap& dst, int cam_x, int cam_y) {
 			dx[j] += gx + afc * tx / tsqr;
 			dy[j] += gy + afc * ty / tsqr;
 			s[j] += ds;
-			Rect dst_rect(x[j] - cam_x - s[j] / 2, y[j] - cam_y - s[j] / 2 - z_offset, s[j], s[j]);
-
-			if (hasTexture) {
-				dst.StretchBlit(dst_rect, *image, image->GetRect(), Opacity(alpha));
-			} else {
-				dst.FillRect(dst_rect, Color(color.red, color.green, color.blue, alpha));
-			}
 		}
 	}
-}
-
-void Burst::resize() {
-	simulMax *= 2;
-	size_t particle_pool_size = static_cast<size_t>(amount) * simulMax;
-
-	x.resize(particle_pool_size);
-	y.resize(particle_pool_size);
-	s.resize(particle_pool_size);
-	dx.resize(particle_pool_size);
-	dy.resize(particle_pool_size);
-	itr.resize(simulMax);
-	origins.resize(simulMax);
-}
-
-void Burst::setAmount(int newAmount) {
-	amount = newAmount;
-	resize();
-}
-
-void Burst::setSimul(int newSimul) {
-	simulMax = newSimul;
-	resize();
-	simulCnt = 0;
 }
 
 void Burst::Draw(Bitmap& dst) {
 	if (simulCnt <= 0) return;
-
-	// Recycle dead bursts
-	for (int i = 0; i < simulCnt; ++i) {
-		if (itr[i] >= fade) {
-			simulCnt--;
-			if (i < simulCnt) { // If it's not the last one
-				// Copy the last active burst over the dead one
-				size_t dead_offset = i * amount;
-				size_t last_offset = simulCnt * amount;
-				std::copy_n(&x[last_offset], amount, &x[dead_offset]);
-				std::copy_n(&y[last_offset], amount, &y[dead_offset]);
-				std::copy_n(&s[last_offset], amount, &s[dead_offset]);
-				std::copy_n(&dx[last_offset], amount, &dx[dead_offset]);
-				std::copy_n(&dy[last_offset], amount, &dy[dead_offset]);
-				itr[i] = itr[simulCnt];
-				origins[i] = origins[simulCnt];
-			}
-			--i; // Re-check this index in case the swapped one was also dead
-		}
-	}
 
 	int cam_x = (isScreenRelative) ? 0 : Game_Map::GetDisplayX() / 16;
 	int cam_y = (isScreenRelative) ? 0 : Game_Map::GetDisplayY() / 16;
 
 	if (Game_Map::GetIsMode7() && !isScreenRelative && renderType != RenderType::Screen) {
 		for (int i = 0; i < simulCnt; i++) {
-			int age = itr[i];
-			if (age >= fade) continue;
+			int age = itr[i] - 1;
+			if (age < 0 || age >= fade) continue;
 
-			itr[i]++;
 			int alpha = static_cast<int>(255 - da * age);
 			Color color = palette[age];
 
@@ -991,8 +1020,6 @@ void Burst::Draw(Bitmap& dst) {
 				}
 				SetZ(z);
 
-				// ** HORIZON RECOVERY **
-				// Same logic as Stream: if origin clipped, try a fallback point slightly South.
 				if (origin_transform.zoom <= 0) {
 					auto fallback_transform = Game_Map::TransformToMode7(input_x, input_y + 16);
 					if (fallback_transform.zoom > 0) {
@@ -1006,18 +1033,11 @@ void Burst::Draw(Bitmap& dst) {
 				}
 
 				for (int j = i * amount; j < (i + 1) * amount; j++) {
-					x[j] += dx[j]; y[j] += dy[j];
-					float tx = ax0 - x[j]; float ty = ay0 - y[j];
-					float tsqr = sqrtf(tx*tx + ty*ty + 0.001);
-					dx[j] += gx + afc * tx / tsqr; dy[j] += gy + afc * ty / tsqr;
-					s[j] += ds;
-
 					float particle_offset_x = x[j] - origins[i].x;
 					float particle_offset_y = y[j] - origins[i].y;
 
 					float final_x = origin_transform.screen_x + (particle_offset_x * origin_transform.zoom);
 					float final_y = origin_transform.screen_y + (particle_offset_y * origin_transform.zoom) + y_adjust;
-
 					final_y -= z_offset * origin_transform.zoom;
 
 					float size = s[j] * origin_transform.zoom;
@@ -1033,21 +1053,13 @@ void Burst::Draw(Bitmap& dst) {
 				// --- MAP PLANE RENDERING ---
 				SetZ(base_z + z_offset);
 				for (int j = i * amount; j < (i + 1) * amount; j++) {
-					x[j] += dx[j]; y[j] += dy[j];
-					float tx = ax0 - x[j]; float ty = ay0 - y[j];
-					float tsqr = sqrtf(tx*tx + ty*ty + 0.001);
-					dx[j] += gx + afc * tx / tsqr; dy[j] += gy + afc * ty / tsqr;
-					s[j] += ds;
-
 					int input_x = x[j] - cam_x;
 					int input_y = y[j] - cam_y;
 					auto transform = Game_Map::TransformToMode7(input_x, input_y);
 
 					if (transform.zoom > 0) {
 						float size = s[j] * transform.zoom;
-
 						transform.screen_y -= z_offset * transform.zoom;
-
 						Rect dst_rect(transform.screen_x - size / 2.0f, transform.screen_y - size / 2.0f, size, size);
 
 						if (hasTexture) {
@@ -1061,13 +1073,28 @@ void Burst::Draw(Bitmap& dst) {
 		}
 	} else {
 		// 2D Mode Fix:
-		// Force particles to the Animation layer so they draw over map events.
 		SetZ(Priority_BattleAnimation + z_offset);
 
-		// Original 2D drawing logic
-		(this->*draw_function)(dst, cam_x, cam_y);
+		for (int i = 0; i < simulCnt; i++) {
+			int age = itr[i] - 1;
+			if (age < 0 || age >= fade) continue;
+
+			int alpha = static_cast<int>(255 - da * age);
+			Color color = palette[age];
+
+			for (int j = i * amount; j < (i + 1) * amount; j++) {
+				Rect dst_rect(x[j] - cam_x - s[j] / 2.0f, y[j] - cam_y - s[j] / 2.0f - z_offset, s[j], s[j]);
+
+				if (hasTexture) {
+					dst.StretchBlit(dst_rect, *image, image->GetRect(), Opacity(alpha));
+				} else {
+					dst.FillRect(dst_rect, Color(color.red, color.green, color.blue, alpha));
+				}
+			}
+		}
 	}
 }
+
 // ============================================================================
 // DynRPG Plugin Interface Implementation
 // ============================================================================
@@ -1260,7 +1287,7 @@ DynRpg::Particle::Particle(Game_DynRpg& instance) : DynRpgPlugin("KazeParticles"
 		function_list["pfx_stop"] = &stop;
 		function_list["pfx_stopall"] = &stopall;
 
-		auto add_setter_1_int = [](const char* name, void (ParticleEffect::*setter)(int)) {
+		auto add_setter_1_int =[](const char* name, void (ParticleEffect::*setter)(int)) {
 			function_list[name] = [name, setter](dyn_arg_list args) {
 				bool okay; std::string tag; int val;
 				std::tie(tag, val) = DynRpg::ParseArgs<std::string, int>(name, args, &okay);
@@ -1268,15 +1295,15 @@ DynRpg::Particle::Particle(Game_DynRpg& instance) : DynRpgPlugin("KazeParticles"
 				return true;
 			};
 		};
-		auto add_setter_2_int = [](const char* name, void (ParticleEffect::*setter)(int, int)) {
-			function_list[name] = [name, setter](dyn_arg_list args) {
+		auto add_setter_2_int =[](const char* name, void (ParticleEffect::*setter)(int, int)) {
+			function_list[name] =[name, setter](dyn_arg_list args) {
 				bool okay; std::string tag; int val1, val2;
 				std::tie(tag, val1, val2) = DynRpg::ParseArgs<std::string, int, int>(name, args, &okay);
 				if (okay) if (auto pfx = GetPfx(tag)) (pfx->*setter)(val1, val2);
 				return true;
 			};
 		};
-		auto add_setter_2_float = [](const char* name, void (ParticleEffect::*setter)(float, float)) {
+		auto add_setter_2_float =[](const char* name, void (ParticleEffect::*setter)(float, float)) {
 			function_list[name] = [name, setter](dyn_arg_list args) {
 				bool okay; std::string tag; float val1, val2;
 				std::tie(tag, val1, val2) = DynRpg::ParseArgs<std::string, float, float>(name, args, &okay);
@@ -1284,7 +1311,7 @@ DynRpg::Particle::Particle(Game_DynRpg& instance) : DynRpgPlugin("KazeParticles"
 				return true;
 			};
 		};
-		auto add_setter_3_int = [](const char* name, void (ParticleEffect::*setter)(uint8_t, uint8_t, uint8_t)) {
+		auto add_setter_3_int =[](const char* name, void (ParticleEffect::*setter)(uint8_t, uint8_t, uint8_t)) {
 			function_list[name] = [name, setter](dyn_arg_list args) {
 				bool okay; std::string tag; int r, g, b;
 				std::tie(tag, r, g, b) = DynRpg::ParseArgs<std::string, int, int, int>(name, args, &okay);
@@ -1304,49 +1331,49 @@ DynRpg::Particle::Particle(Game_DynRpg& instance) : DynRpgPlugin("KazeParticles"
 		add_setter_2_float("pfx_set_growth", &ParticleEffect::setGrowth);
 		add_setter_2_float("pfx_set_angle", &ParticleEffect::setAngle);
 
-		function_list["pfx_set_velocity"] = [](dyn_arg_list args) {
+		function_list["pfx_set_velocity"] =[](dyn_arg_list args) {
 			bool okay; std::string tag; float speed, rand_speed;
 			std::tie(tag, speed, rand_speed) = DynRpg::ParseArgs<std::string, float, float>("pfx_set_velocity", args, &okay);
 			if (okay) if (auto pfx = GetPfx(tag)) { pfx->setSpd(speed); pfx->setRandSpd(rand_speed); }
 			return true;
 		};
-		function_list["pfx_set_texture"] = [](dyn_arg_list args) {
+		function_list["pfx_set_texture"] =[](dyn_arg_list args) {
 			bool okay; std::string tag, texture;
 			std::tie(tag, texture) = DynRpg::ParseArgs<std::string, std::string>("pfx_set_texture", args, &okay);
 			if (okay) if (auto pfx = GetPfx(tag)) pfx->setTexture(texture);
 			return true;
 		};
-		function_list["pfx_set_acceleration_point"] = [](dyn_arg_list args) {
+		function_list["pfx_set_acceleration_point"] =[](dyn_arg_list args) {
 			bool okay; std::string tag; float x, y, force;
 			std::tie(tag, x, y, force) = DynRpg::ParseArgs<std::string, float, float, float>("pfx_set_acceleration_point", args, &okay);
 			if (okay) if (auto pfx = GetPfx(tag)) pfx->setAccelerationPoint(x, y, force);
 			return true;
 		};
-		function_list["pfx_set_gravity_direction"] = [](dyn_arg_list args) {
+		function_list["pfx_set_gravity_direction"] =[](dyn_arg_list args) {
 			bool okay; std::string tag; float angle, force;
 			std::tie(tag, angle, force) = DynRpg::ParseArgs<std::string, float, float>("pfx_set_gravity_direction", args, &okay);
 			if (okay) if (auto pfx = GetPfx(tag)) pfx->setGravityDirection(angle, force);
 			return true;
 		};
-		function_list["pfx_set_secondary_angle"] = [](dyn_arg_list args) {
+		function_list["pfx_set_secondary_angle"] =[](dyn_arg_list args) {
 			bool okay; std::string tag; float angle;
 			std::tie(tag, angle) = DynRpg::ParseArgs<std::string, float>("pfx_set_secondary_angle", args, &okay);
 			if (okay) if (auto pfx = GetPfx(tag)) pfx->setSecondaryAngle(angle);
 			return true;
 		};
-		function_list["pfx_set_generating_function"] = [](dyn_arg_list args) {
+		function_list["pfx_set_generating_function"] =[](dyn_arg_list args) {
 			bool okay; std::string tag, type;
 			std::tie(tag, type) = DynRpg::ParseArgs<std::string, std::string>("pfx_set_generating_function", args, &okay);
 			if (okay) if (auto pfx = GetPfx(tag)) pfx->setGeneratingFunction(type);
 			return true;
 		};
-		function_list["pfx_unload_texture"] = [](dyn_arg_list args) {
+		function_list["pfx_unload_texture"] =[](dyn_arg_list args) {
 			bool okay; std::string tag;
 			std::tie(tag) = DynRpg::ParseArgs<std::string>("pfx_unload_texture", args, &okay);
 			if (okay) if (auto pfx = GetPfx(tag)) pfx->unloadTexture();
 			return true;
 		};
-		function_list["pfx_use_screen_relative"] = [](dyn_arg_list args) {
+		function_list["pfx_use_screen_relative"] =[](dyn_arg_list args) {
 			bool okay; std::string tag, val;
 			std::tie(tag, val) = DynRpg::ParseArgs<std::string, std::string>("pfx_use_screen_relative", args, &okay);
 			if (okay) if (auto pfx = GetPfx(tag)) pfx->useScreenRelative(val[0] == 't' || val[0] == 'T');
@@ -1357,7 +1384,7 @@ DynRpg::Particle::Particle(Game_DynRpg& instance) : DynRpgPlugin("KazeParticles"
 		function_list["pfx_load_effect"] = &load_effect;
 		function_list["pfx_set_z_offset"] = &SetZ;
 		function_list["pfx_set_layer"] = &SetLayer;
-		function_list["pfx_set_render_plane"] = [](dyn_arg_list args) {
+		function_list["pfx_set_render_plane"] =[](dyn_arg_list args) {
 			bool okay; std::string tag, plane;
 			std::tie(tag, plane) = DynRpg::ParseArgs<std::string, std::string>("pfx_set_render_plane", args, &okay);
 			if (okay) {
@@ -1395,7 +1422,9 @@ bool DynRpg::Particle::Invoke(std::string_view func, dyn_arg_list args, bool&, G
 void DynRpg::Particle::Update() {
 	if (!pfx_list.empty()) {
 		if ((Scene::instance && Scene::instance->type == Scene::Map) || Game_Battle::IsBattleRunning()) {
-			// Drawing is handled automatically by the DrawableMgr
+			for (auto const& [tag, pfx] : pfx_list) {
+				pfx->Update();
+			}
 		}
 	}
 }
