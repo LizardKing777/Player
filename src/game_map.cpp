@@ -817,6 +817,8 @@ bool Game_Map::CheckWay(const Game_Character& self,
 	);
 }
 
+/*    OLD VERSION PRE-LARGER EVENTS
+
 bool Game_Map::CheckOrMakeWayEx(const Game_Character& self,
 		int from_x, int from_y,
 		int to_x, int to_y,
@@ -931,6 +933,97 @@ bool Game_Map::CheckOrMakeWayEx(const Game_Character& self,
 	return IsPassableTile(
 		&self, bit, to_x, to_y, check_events_and_vehicles, true
 		);
+}
+
+*/
+
+bool Game_Map::CheckOrMakeWayEx(const Game_Character& self,
+        int from_x, int from_y,
+        int to_x, int to_y,
+        bool check_events_and_vehicles,
+        Span<int> ignore_some_events_by_id,
+        bool make_way
+        )
+{
+    if (self.GetThrough()) {
+        return true;
+    }
+
+    int char_width = self.GetTileWidth();
+    int radius = char_width / 2;
+
+    const auto vehicle_type = GetCollisionVehicleType(&self);
+
+    for (int dx = -radius; dx <= radius; ++dx) {
+        int cur_from_x = from_x + dx;
+        int cur_to_x = to_x + dx;
+
+        const int bit_from = GetPassableMask(cur_from_x, from_y, cur_to_x, to_y);
+        const int bit_to = GetPassableMask(cur_to_x, to_y, cur_from_x, from_y);
+
+        int tile_from_x = Game_Map::RoundX(cur_from_x);
+        int tile_from_y = Game_Map::RoundY(from_y);
+        int tile_to_x = Game_Map::RoundX(cur_to_x);
+        int tile_to_y = Game_Map::RoundY(to_y);
+
+        if (!Game_Map::IsValid(tile_to_x, tile_to_y)) {
+            return false;
+        }
+
+        bool self_conflict = false;
+        if (!self.IsJumping() && self.GetLayer() == lcf::rpg::EventPage::Layers_same && self.GetTileId() != 0) {
+            int tile_id = self.GetTileId();
+            if ((passages_up[tile_id] & bit_from) == 0) {
+                self_conflict = true;
+            }
+        }
+
+        auto CheckOrMakeCollideEvent = [&](auto& other) {
+            if (make_way) {
+                return MakeWayCollideEvent(tile_to_x, tile_to_y, self, other, self_conflict);
+            } else {
+                return CheckWayTestCollideEvent(tile_to_x, tile_to_y, self, other, self_conflict);
+            }
+        };
+
+        if (!self.IsJumping()) {
+            if (vehicle_type == Game_Vehicle::None) {
+                if (!IsPassableTile(&self, bit_from, tile_from_x, tile_from_y, false, true)) {
+                    return false;
+                }
+            }
+        }
+
+        int bit_onto = self.IsJumping() ? Passable::Down : bit_to;
+        if (!IsPassableTile(&self, bit_onto, tile_to_x, tile_to_y, false, true)) {
+            return false;
+        }
+
+        if (vehicle_type != Game_Vehicle::Airship && check_events_and_vehicles) {
+            for (auto& other : GetEvents()) {
+                if (!ignore_some_events_by_id.empty() && std::find(ignore_some_events_by_id.begin(), ignore_some_events_by_id.end(), other.GetId()) != ignore_some_events_by_id.end())
+                    continue;
+                if (CheckOrMakeCollideEvent(other)) return false;
+            }
+
+            auto& player = Main_Data::game_player;
+            if (player->GetVehicleType() == Game_Vehicle::None) {
+                if (CheckOrMakeCollideEvent(*Main_Data::game_player)) return false;
+            }
+
+            for (auto vid : { Game_Vehicle::Boat, Game_Vehicle::Ship }) {
+                auto& other = vehicles[vid - 1];
+                if (other.IsInCurrentMap() && CheckOrMakeCollideEvent(other)) return false;
+            }
+
+            auto& airship = vehicles[Game_Vehicle::Airship - 1];
+            if (airship.IsInCurrentMap() && self.GetType() != Game_Character::Player) {
+                if (CheckOrMakeCollideEvent(airship)) return false;
+            }
+        }
+    }
+
+    return true;
 }
 
 bool Game_Map::MakeWay(const Game_Character& self,

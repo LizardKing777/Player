@@ -354,38 +354,47 @@ bool Game_Event::CheckEventAutostart() {
 }
 
 bool Game_Event::CheckEventCollision() {
-	if (GetTrigger() == lcf::rpg::EventPage::Trigger_collision
-			&& GetLayer() != lcf::rpg::EventPage::Layers_same
-			&& !Main_Data::game_player->IsMoveRouteOverwritten()
-			&& !Game_Map::GetInterpreter().IsRunning()
-			&& Main_Data::game_player->GetX() == GetX()
-			&& Main_Data::game_player->GetY() == GetY())
-	{
-		ScheduleForegroundExecution(false, true);
-		SetStopCount(0);
-		return true;
-	}
-	return false;
+    if (GetTrigger() == lcf::rpg::EventPage::Trigger_collision
+            && GetLayer() != lcf::rpg::EventPage::Layers_same
+            && !Main_Data::game_player->IsMoveRouteOverwritten()
+            && !Game_Map::GetInterpreter().IsRunning()
+            && IsInPosition(Main_Data::game_player->GetX(), Main_Data::game_player->GetY()))
+    {
+        ScheduleForegroundExecution(false, true);
+        SetStopCount(0);
+        return true;
+    }
+    return false;
 }
 
 void Game_Event::CheckCollisonOnMoveFailure() {
-	if (Game_Map::GetInterpreter().IsRunning()) {
-		return;
-	}
+    if (Game_Map::GetInterpreter().IsRunning()) {
+        return;
+    }
 
-	const auto front_x = Game_Map::XwithDirection(GetX(), GetDirection());
-	const auto front_y = Game_Map::YwithDirection(GetY(), GetDirection());
+    int char_width = GetTileWidth();
+    int radius = (char_width - 1) / 2;
+    int player_x = Main_Data::game_player->GetX();
+    int player_y = Main_Data::game_player->GetY();
 
-	if (Main_Data::game_player->GetX() == front_x
-			&& Main_Data::game_player->GetY() == front_y
-			&& GetLayer() == lcf::rpg::EventPage::Layers_same
-			&& GetTrigger() == lcf::rpg::EventPage::Trigger_collision)
-	{
-		ScheduleForegroundExecution(false, true);
-		// Events with trigger collision and layer same always reset their
-		// stop_count when they fail movement to a tile that the player inhabits.
-		SetStopCount(0);
-	}
+    // Check the entire front edge of the event's expanded width
+    for (int dx = -radius; dx <= radius; ++dx) {
+        int segment_x = GetX() + dx;
+        int front_x = Game_Map::RoundX(Game_Map::XwithDirection(segment_x, GetDirection()));
+        int front_y = Game_Map::RoundY(Game_Map::YwithDirection(GetY(), GetDirection()));
+
+        if (player_x == front_x
+                && player_y == front_y
+                && GetLayer() == lcf::rpg::EventPage::Layers_same
+                && GetTrigger() == lcf::rpg::EventPage::Trigger_collision)
+        {
+            ScheduleForegroundExecution(false, true);
+            // Events with trigger collision and layer same always reset their
+            // stop_count when they fail movement to a tile that the player inhabits.
+            SetStopCount(0);
+            return;
+        }
+    }
 }
 
 bool Game_Event::Move(int dir) {

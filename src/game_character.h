@@ -818,6 +818,10 @@ public:
 	 */
 	virtual bool IsInPosition(int x, int y) const;
 
+    int GetTileWidth() const;
+    float GetHitboxRadius() const;
+
+
 	/**
 	 * Gets current opacity of character.
 	 *
