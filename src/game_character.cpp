@@ -17,6 +17,8 @@
 
 // Headers
 #include "audio.h"
+#include "cache.h"
+#include "bitmap.h"
 #include "game_character.h"
 #include "game_map.h"
 #include "game_player.h"
@@ -1123,8 +1125,98 @@ int Game_Character::GetSpriteY() const {
 	return y;
 }
 
+
+/*    OLD VERSION
 bool Game_Character::IsInPosition(int x, int y) const {
 	return ((GetX() == x) && (GetY() == y));
+}
+*/
+
+int Game_Character::GetTileWidth() const {
+    std::string_view name = data()->sprite_name;
+    if (name.empty()) {
+        return 1;
+    }
+
+    auto bitmap = Cache::Charset(name);
+    if (!bitmap) {
+        return 1;
+    }
+
+    // 1. Physical dimensions
+    int columns = (name[0] == '$') ? 3 : 12;
+    int pixel_frame_width = bitmap->GetWidth() / columns;
+    int pixel_frame_height = bitmap->GetHeight() / 4;
+
+    // 2. Normalize scale (Standard RM character height is 32px)
+    float logical_scale = (float)pixel_frame_height / 32.0f;
+    if (logical_scale <= 0.0f) {
+        return 1;
+    }
+
+    // 3. Logical width (relative to a 320x240 screen)
+    int logical_width = (int)round((float)pixel_frame_width / logical_scale);
+
+    // 4. Threshold Logic
+    const int expansion_threshold = 48;    // Start expanding tiles after 48 logical pixels
+    const int aggressive_threshold = 64;   // Trigger "Aggressive" mode earlier
+
+    if (logical_width < expansion_threshold) {
+        return 1;
+    }
+
+    // 5. Radius Calculation
+    // We calculate how many 16px tiles the footprint extends past the center.
+    int footprint_half = (logical_width - 8) / 2;
+    int radius = (footprint_half - 1) / 16;
+
+    // 6. Aggressive Bonus
+    // If the sprite is wider than 64 logical pixels (like your Demon),
+    // we force one extra tile of collision to each side.
+    if (logical_width > aggressive_threshold) {
+        radius += 1;
+    }
+
+    // Return odd number of tiles: 1 + (radius * 2)
+    // Slime (48px): Base Radius 1 -> 3 tiles wide
+    // Demon (~80px): Base Radius 2 + 1 bonus -> 7 tiles wide
+    return 1 + (radius * 2);
+}
+
+float Game_Character::GetHitboxRadius() const {
+    // Derive the pixel-movement radius from the tile-width for consistency
+    int tiles = GetTileWidth();
+    if (tiles <= 1) {
+        return 0.5f;
+    }
+    return (float)tiles / 2.0f;
+}
+
+bool Game_Character::IsInPosition(int x, int y) const {
+    if (GetY() != y) {
+        return false;
+    }
+
+    int char_width = GetTileWidth();
+    if (char_width <= 1) {
+        return GetX() == x;
+    }
+
+    int radius = char_width / 2;
+    int left_edge = GetX() - radius;
+    int right_edge = GetX() + radius;
+
+    if (Game_Map::LoopHorizontal()) {
+        int map_w = Game_Map::GetTilesX();
+        for (int i = left_edge; i <= right_edge; ++i) {
+            if (Utils::PositiveModulo(i, map_w) == x) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    return x >= left_edge && x <= right_edge;
 }
 
 int Game_Character::GetOpacity() const {

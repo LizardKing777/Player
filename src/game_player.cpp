@@ -438,8 +438,9 @@ bool Game_Player::CheckEventTriggerHere(TriggerSet triggers, bool triggered_by_d
 	for (auto& ev: Game_Map::GetEvents()) {
 		const auto trigger = ev.GetTrigger();
 		if (ev.IsActive()
-				&& ev.GetX() == GetX()
-				&& ev.GetY() == GetY()
+//				&& ev.GetX() == GetX()
+//				&& ev.GetY() == GetY()          - OLD CODE
+                && ev.IsInPosition(GetX(), GetY())
 				&& ev.GetLayer() != lcf::rpg::EventPage::Layers_same
 				&& trigger >= 0
 				&& triggers[trigger]) {
@@ -459,8 +460,9 @@ bool Game_Player::CheckEventTriggerThere(TriggerSet triggers, int x, int y, bool
 	for (auto& ev : Game_Map::GetEvents()) {
 		const auto trigger = ev.GetTrigger();
 		if (ev.IsActive()
-				&& ev.GetX() == x
-				&& ev.GetY() == y
+//				&& ev.GetX() == x
+//				&& ev.GetY() == y
+                && ev.IsInPosition(x, y)
 				&& ev.GetLayer() == lcf::rpg::EventPage::Layers_same
 				&& trigger >= 0
 				&& triggers[trigger]) {
