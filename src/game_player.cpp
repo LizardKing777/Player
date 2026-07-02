@@ -265,87 +265,90 @@ bool Game_Player::UpdateAirship() {
 }
 
 void Game_Player::UpdateNextMovementAction() {
-	if (UpdateAirship()) {
-		return;
-	}
+    if (UpdateAirship()) {
+        return;
+    }
 
-	UpdateMoveRoute(data()->move_route_index, data()->move_route, true);
+    UpdateMoveRoute(data()->move_route_index, data()->move_route, true);
 
-	if (Game_Map::GetInterpreter().IsRunning()) {
-		SetMenuCalling(false);
-		return;
-	}
+    if (Game_Map::GetInterpreter().IsRunning()) {
+        SetMenuCalling(false);
+        return;
+    }
 
-	if(IsPaused() || IsMoveRouteOverwritten() || Game_Message::IsMessageActive()) {
-		return;
-	}
+    if(IsPaused() || IsMoveRouteOverwritten() || Game_Message::IsMessageActive()) {
+        return;
+    }
 
-	if (IsEncounterCalling()) {
-		SetMenuCalling(false);
-		SetEncounterCalling(false);
+    if (IsEncounterCalling()) {
+        SetMenuCalling(false);
+        SetEncounterCalling(false);
 
-		BattleArgs args;
-		if (Game_Map::PrepareEncounter(args)) {
-			Scene::instance->SetRequestedScene(Scene_Battle::Create(std::move(args)));
-			return;
-		}
-	}
+        BattleArgs args;
+        if (Game_Map::PrepareEncounter(args)) {
+            Scene::instance->SetRequestedScene(Scene_Battle::Create(std::move(args)));
+            return;
+        }
+    }
 
-	if (IsMenuCalling()) {
-		SetMenuCalling(false);
+    if (IsMenuCalling()) {
+        SetMenuCalling(false);
 
-		ResetAnimation();
-		Main_Data::game_system->SePlay(Main_Data::game_system->GetSystemSE(Main_Data::game_system->SFX_Decision));
-		Game_Map::GetInterpreter().RequestMainMenuScene();
-		return;
-	}
+        ResetAnimation();
+        Main_Data::game_system->SePlay(Main_Data::game_system->GetSystemSE(Main_Data::game_system->SFX_Decision));
+        Game_Map::GetInterpreter().RequestMainMenuScene();
+        return;
+    }
 
-	CheckEventTriggerHere({ lcf::rpg::EventPage::Trigger_collision }, false);
+    CheckEventTriggerHere({ lcf::rpg::EventPage::Trigger_collision }, false);
 
-	if (Game_Map::IsAnyEventStarting()) {
-		return;
-	}
+    if (Game_Map::IsAnyEventStarting()) {
+        return;
+    }
 
-	int move_dir = -1;
-	switch (Input::dir4) {
-		case 2:
-			move_dir = Down;
-			break;
-		case 4:
-			move_dir = Left;
-			break;
-		case 6:
-			move_dir = Right;
-			break;
-		case 8:
-			move_dir = Up;
-			break;
-	}
-	if (move_dir >= 0) {
-		SetThrough((Player::debug_flag && Input::IsPressed(Input::DEBUG_THROUGH)) || data()->move_route_through);
-		Move(move_dir);
-		ResetThrough();
-		if (IsStopping()) {
-			int front_x = Game_Map::XwithDirection(GetX(), GetDirection());
-			int front_y = Game_Map::YwithDirection(GetY(), GetDirection());
-			CheckEventTriggerThere({lcf::rpg::EventPage::Trigger_touched, lcf::rpg::EventPage::Trigger_collision}, front_x, front_y, false);
-		}
-	}
+    int move_dir = -1;
+    switch (Input::dir4) {
+        case 2: move_dir = Down; break;
+        case 4: move_dir = Left; break;
+        case 6: move_dir = Right; break;
+        case 8: move_dir = Up; break;
+    }
 
-	if (IsStopping()) {
-		if (Input::IsTriggered(Input::DECISION)) {
-			if (!GetOnOffVehicle()) {
-				CheckActionEvent();
-			}
-		}
-		return;
-	}
+    if (move_dir >= 0) {
+        SetThrough((Player::debug_flag && Input::IsPressed(Input::DEBUG_THROUGH)) || data()->move_route_through);
+        Move(move_dir);
+        ResetThrough();
 
-	Main_Data::game_party->IncSteps();
-	if (Main_Data::game_party->ApplyStateDamage()) {
-		Main_Data::game_screen->FlashMapStepDamage();
-	}
-	UpdateEncounterSteps();
+        if (IsStopping()) {
+            // FOOTPRINT AWARE COLLISION TRIGGER:
+            // If movement fails, check the entire leading edge for collision triggers
+            int min_x, max_x, min_y, max_y;
+            const Game_Character* active_char = IsAboard() ? static_cast<const Game_Character*>(GetVehicle()) : static_cast<const Game_Character*>(this);
+            active_char->GetTileOffsets(min_x, max_x, min_y, max_y);
+
+            int dir = GetDirection();
+            for (int i = (dir == Up || dir == Down ? min_x : min_y); i <= (dir == Up || dir == Down ? max_x : max_y); ++i) {
+                int fx = GetX() + (dir == Up || dir == Down ? i : (dir == Left ? min_x - 1 : max_x + 1));
+                int fy = GetY() + (dir == Left || dir == Right ? i : (dir == Up ? min_y - 1 : max_y + 1));
+                CheckEventTriggerThere({lcf::rpg::EventPage::Trigger_touched, lcf::rpg::EventPage::Trigger_collision}, Game_Map::RoundX(fx), Game_Map::RoundY(fy), false);
+            }
+        }
+    }
+
+    if (IsStopping()) {
+        if (Input::IsTriggered(Input::DECISION)) {
+            if (!GetOnOffVehicle()) {
+                CheckActionEvent();
+            }
+        }
+        return;
+    }
+
+    Main_Data::game_party->IncSteps();
+    if (Main_Data::game_party->ApplyStateDamage()) {
+        Main_Data::game_screen->FlashMapStepDamage();
+    }
+    UpdateEncounterSteps();
 }
 
 void Game_Player::UpdateMovement(int amount) {
@@ -401,76 +404,99 @@ void Game_Player::Update() {
 }
 
 bool Game_Player::CheckActionEvent() {
-	if (IsFlying()) {
-		return false;
-	}
+    if (IsFlying()) {
+        return false;
+    }
 
-	bool result = false;
-	int front_x = Game_Map::XwithDirection(GetX(), GetDirection());
-	int front_y = Game_Map::YwithDirection(GetY(), GetDirection());
+    // Determine if we use Hero or Vehicle offsets
+    int min_x, max_x, min_y, max_y;
+    const Game_Character* active_char = IsAboard() ? static_cast<const Game_Character*>(GetVehicle()) : static_cast<const Game_Character*>(this);
+    active_char->GetTileOffsets(min_x, max_x, min_y, max_y);
 
-	result |= CheckEventTriggerThere({lcf::rpg::EventPage::Trigger_touched, lcf::rpg::EventPage::Trigger_collision}, front_x, front_y, true);
-	result |= CheckEventTriggerHere({lcf::rpg::EventPage::Trigger_action}, true);
+    int dir = GetDirection();
+    bool result = false;
 
-	// Counter tile loop stops only if you talk to an action event.
-	bool got_action = CheckEventTriggerThere({lcf::rpg::EventPage::Trigger_action}, front_x, front_y, true);
-	// RPG_RT allows maximum of 3 counter tiles
-	for (int i = 0; !got_action && i < 3; ++i) {
-		if (!Game_Map::IsCounter(front_x, front_y)) {
-			break;
-		}
+    // 1. Check leading edge for Touch/Collision
+    for (int i = (dir == Up || dir == Down ? min_x : min_y); i <= (dir == Up || dir == Down ? max_x : max_y); ++i) {
+        int fx = GetX() + (dir == Up || dir == Down ? i : (dir == Left ? min_x - 1 : max_x + 1));
+        int fy = GetY() + (dir == Left || dir == Right ? i : (dir == Up ? min_y - 1 : max_y + 1));
+        result |= CheckEventTriggerThere({lcf::rpg::EventPage::Trigger_touched, lcf::rpg::EventPage::Trigger_collision}, Game_Map::RoundX(fx), Game_Map::RoundY(fy), true);
+    }
 
-		front_x = Game_Map::XwithDirection(front_x, GetDirection());
-		front_y = Game_Map::YwithDirection(front_y, GetDirection());
+    // 2. Check for stepping on events
+    result |= CheckEventTriggerHere({lcf::rpg::EventPage::Trigger_action}, true);
 
-		got_action |= CheckEventTriggerThere({lcf::rpg::EventPage::Trigger_action}, front_x, front_y, true);
-	}
-	return result || got_action;
+    // 3. Check for Action triggers (including Counters)
+    bool got_action = false;
+    for (int i = (dir == Up || dir == Down ? min_x : min_y); i <= (dir == Up || dir == Down ? max_x : max_y); ++i) {
+        int fx = GetX() + (dir == Up || dir == Down ? i : (dir == Left ? min_x - 1 : max_x + 1));
+        int fy = GetY() + (dir == Left || dir == Right ? i : (dir == Up ? min_y - 1 : max_y + 1));
+
+        int cur_fx = Game_Map::RoundX(fx);
+        int cur_fy = Game_Map::RoundY(fy);
+
+        got_action |= CheckEventTriggerThere({lcf::rpg::EventPage::Trigger_action}, cur_fx, cur_fy, true);
+
+        for (int c = 0; !got_action && c < 3; ++c) {
+            if (!Game_Map::IsCounter(cur_fx, cur_fy)) break;
+
+            cur_fx = Game_Map::RoundX(Game_Map::XwithDirection(cur_fx, dir));
+            cur_fy = Game_Map::RoundY(Game_Map::YwithDirection(cur_fy, dir));
+            got_action |= CheckEventTriggerThere({lcf::rpg::EventPage::Trigger_action}, cur_fx, cur_fy, true);
+        }
+    }
+
+    return result || got_action;
 }
 
 bool Game_Player::CheckEventTriggerHere(TriggerSet triggers, bool triggered_by_decision_key, bool face_player) {
-	if (InAirship()) {
-		return false;
-	}
+    if (InAirship()) return false;
+    bool result = false;
 
-	bool result = false;
+    int min_x, max_x, min_y, max_y;
+    const Game_Character* active_char = IsAboard() ? static_cast<const Game_Character*>(GetVehicle()) : static_cast<const Game_Character*>(this);
+    active_char->GetTileOffsets(min_x, max_x, min_y, max_y);
 
-	for (auto& ev: Game_Map::GetEvents()) {
-		const auto trigger = ev.GetTrigger();
-		if (ev.IsActive()
-//				&& ev.GetX() == GetX()
-//				&& ev.GetY() == GetY()          - OLD CODE
-                && ev.IsInPosition(GetX(), GetY())
-				&& ev.GetLayer() != lcf::rpg::EventPage::Layers_same
-				&& trigger >= 0
-				&& triggers[trigger]) {
-			SetEncounterCalling(false);
-			result |= ev.ScheduleForegroundExecution(triggered_by_decision_key, face_player);
-		}
-	}
-	return result;
+    for (auto& ev: Game_Map::GetEvents()) {
+        const auto trigger = ev.GetTrigger();
+        if (!ev.IsActive() || ev.GetLayer() == lcf::rpg::EventPage::Layers_same || trigger < 0 || !triggers[trigger]) continue;
+
+        bool overlap = false;
+        for (int dy = min_y; dy <= max_y && !overlap; ++dy) {
+            for (int dx = min_x; dx <= max_x && !overlap; ++dx) {
+                if (ev.IsInPosition(Game_Map::RoundX(GetX() + dx), Game_Map::RoundY(GetY() + dy))) overlap = true;
+            }
+        }
+
+        if (overlap) {
+            if (ev.ScheduleForegroundExecution(triggered_by_decision_key, face_player)) {
+                result = true;
+                SetEncounterCalling(false);
+            }
+        }
+    }
+    return result;
 }
 
 bool Game_Player::CheckEventTriggerThere(TriggerSet triggers, int x, int y, bool triggered_by_decision_key, bool face_player) {
-	if (InAirship()) {
-		return false;
-	}
-	bool result = false;
+    if (InAirship()) return false;
+    bool result = false;
 
-	for (auto& ev : Game_Map::GetEvents()) {
-		const auto trigger = ev.GetTrigger();
-		if (ev.IsActive()
-//				&& ev.GetX() == x
-//				&& ev.GetY() == y
+    for (auto& ev : Game_Map::GetEvents()) {
+        const auto trigger = ev.GetTrigger();
+        if (ev.IsActive()
                 && ev.IsInPosition(x, y)
-				&& ev.GetLayer() == lcf::rpg::EventPage::Layers_same
-				&& trigger >= 0
-				&& triggers[trigger]) {
-			SetEncounterCalling(false);
-			result |= ev.ScheduleForegroundExecution(triggered_by_decision_key, face_player);
-		}
-	}
-	return result;
+                && ev.GetLayer() == lcf::rpg::EventPage::Layers_same
+                && trigger >= 0
+                && triggers[trigger])
+        {
+            if (ev.ScheduleForegroundExecution(triggered_by_decision_key, face_player)) {
+                result = true;
+                SetEncounterCalling(false);
+            }
+        }
+    }
+    return result;
 }
 
 void Game_Player::ResetGraphic() {
@@ -497,110 +523,251 @@ bool Game_Player::GetOnOffVehicle() {
 }
 
 bool Game_Player::GetOnVehicle() {
-	assert(!IsDirectionDiagonal(GetDirection()));
-	assert(!IsAboard());
+    assert(!IsDirectionDiagonal(GetDirection()));
+    assert(!IsAboard());
 
-	auto* vehicle = Game_Map::GetVehicle(Game_Vehicle::Airship);
+    // 1. Handle Airship Boarding (Footprint-aware centering with camera fix)
+    auto* airship = Game_Map::GetVehicle(Game_Vehicle::Airship);
+    if (airship->IsInPosition(GetX(), GetY()) && IsStopping() && airship->IsStopping()) {
+        int tx = airship->GetX();
+        int ty = airship->GetY();
 
-	if (vehicle->IsInPosition(GetX(), GetY()) && IsStopping() && vehicle->IsStopping()) {
-		data()->vehicle = Game_Vehicle::Airship;
-		data()->aboard = true;
+        // If the player is touching the airship's expanded collision but is not at the center:
+        while (GetX() != tx || GetY() != ty) {
+            int dx = tx - GetX();
+            int dy = ty - GetY();
 
-		// Note: RPG_RT ignores the lock_facing flag here!
-		SetFacing(Left);
+            // Distance correction for looping maps
+            if (Game_Map::LoopHorizontal()) {
+                int w = Game_Map::GetTilesX();
+                if (std::abs(dx) > w / 2) dx = (dx > 0) ? dx - w : dx + w;
+            }
+            if (Game_Map::LoopVertical()) {
+                int h = Game_Map::GetTilesY();
+                if (std::abs(dy) > h / 2) dy = (dy > 0) ? dy - h : dy + h;
+            }
 
-		data()->preboard_move_speed = GetMoveSpeed();
-		SetMoveSpeed(vehicle->GetMoveSpeed());
-		vehicle->StartAscent();
-		Main_Data::game_player->SetFlying(vehicle->IsFlying());
-	} else {
-		const auto front_x = Game_Map::XwithDirection(GetX(), GetDirection());
-		const auto front_y = Game_Map::YwithDirection(GetY(), GetDirection());
+            // Determine pathing direction to the pilot seat
+            int move_dir = -1;
+            if (dx != 0)      move_dir = (dx > 0) ? Right : Left;
+            else if (dy != 0) move_dir = (dy > 0) ? Down : Up;
 
-		vehicle = Game_Map::GetVehicle(Game_Vehicle::Ship);
-		if (!vehicle->IsInPosition(front_x, front_y)) {
-			vehicle = Game_Map::GetVehicle(Game_Vehicle::Boat);
-			if (!vehicle->IsInPosition(front_x, front_y)) {
-				return false;
-			}
-		}
+            if (move_dir == -1) break;
 
-		if (!Game_Map::CanEmbarkShip(*this, front_x, front_y)) {
-			return false;
-		}
+            SetThrough(true);
+            // For the final step onto the center, use the animated Move()
+            // Move() internally updates the camera scroll.
+            if (std::abs(dx) + std::abs(dy) == 1) {
+                Move(move_dir);
+            } else {
+                // For tiles further away, snap coordinates
+                SetX(Game_Map::RoundX(GetX() + GetDxFromDirection(move_dir)));
+                SetY(Game_Map::RoundY(GetY() + GetDyFromDirection(move_dir)));
 
-		SetThrough(true);
-		Move(GetDirection());
-		// FIXME: RPG_RT resets through to move_route_through || not visible?
-		ResetThrough();
 
-		data()->vehicle = vehicle->GetVehicleType();
-		data()->preboard_move_speed = GetMoveSpeed();
-		data()->boarding = true;
-	}
 
-	Main_Data::game_system->SetBeforeVehicleMusic(Main_Data::game_system->GetCurrentBGM());
-	Main_Data::game_system->BgmPlay(vehicle->GetBGM());
-	return true;
+                // CAMERA FIX: Manually realign the camera during the snap phase
+                // This prevents the camera from "jumping" or only following one axis.
+                Game_Map::SetPositionX(GetSpriteX() - GetPanX());
+                Game_Map::SetPositionY(GetSpriteY() - GetPanY());
+            }
+            ResetThrough();
+        }
+
+        // Proceed with standard boarding sequence once centered
+        data()->vehicle = Game_Vehicle::Airship;
+        data()->aboard = true;
+
+        SetFacing(Left);
+
+        data()->preboard_move_speed = GetMoveSpeed();
+        SetMoveSpeed(airship->GetMoveSpeed());
+        airship->StartAscent();
+        Main_Data::game_player->SetFlying(airship->IsFlying());
+
+        Main_Data::game_system->SetBeforeVehicleMusic(Main_Data::game_system->GetCurrentBGM());
+        Main_Data::game_system->BgmPlay(airship->GetBGM());
+        return true;
+    }
+
+    // 2. Handle Boat/Ship Boarding (Footprint-aware)
+    const auto front_x = Game_Map::RoundX(Game_Map::XwithDirection(GetX(), GetDirection()));
+    const auto front_y = Game_Map::RoundY(Game_Map::YwithDirection(GetY(), GetDirection()));
+
+    Game_Vehicle* vehicle = nullptr;
+    for (auto vid : { Game_Vehicle::Ship, Game_Vehicle::Boat }) {
+        auto* v = Game_Map::GetVehicle(vid);
+        if (v->IsInCurrentMap() && v->IsInPosition(front_x, front_y)) {
+            vehicle = v;
+            break;
+        }
+    }
+
+    if (!vehicle || !Game_Map::CanEmbarkShip(*this, front_x, front_y)) {
+        return false;
+    }
+
+    int tx = vehicle->GetX();
+    int ty = vehicle->GetY();
+
+    // BOARDING PATH LOOP:
+    // We move tile-by-tile until the hero's coordinates match the vehicle's center.
+    while (GetX() != tx || GetY() != ty) {
+        int dx = tx - GetX();
+        int dy = ty - GetY();
+
+        // Distance correction for looping maps
+        if (Game_Map::LoopHorizontal()) {
+            int w = Game_Map::GetTilesX();
+            if (std::abs(dx) > w / 2) dx = (dx > 0) ? dx - w : dx + w;
+        }
+        if (Game_Map::LoopVertical()) {
+            int h = Game_Map::GetTilesY();
+            if (std::abs(dy) > h / 2) dy = (dy > 0) ? dy - h : dy + h;
+        }
+
+        // Determine the best direction to move toward the center
+        int move_dir = -1;
+        if (dx != 0)      move_dir = (dx > 0) ? Right : Left;
+        else if (dy != 0) move_dir = (dy > 0) ? Down : Up;
+
+        if (move_dir == -1) break;
+
+        SetThrough(true);
+        // If we are exactly one tile away from the center, use the animated Move() call
+        if (std::abs(dx) + std::abs(dy) == 1) {
+            Move(move_dir);
+        } else {
+            // If further away (large footprint), snap coordinates to clear the visual area instantly
+            SetX(Game_Map::RoundX(GetX() + GetDxFromDirection(move_dir)));
+            SetY(Game_Map::RoundY(GetY() + GetDyFromDirection(move_dir)));
+            // Keep pixel-movement system in sync
+
+        }
+        ResetThrough();
+    }
+
+    data()->vehicle = vehicle->GetVehicleType();
+    data()->preboard_move_speed = GetMoveSpeed();
+    data()->boarding = true;
+
+    Main_Data::game_system->SetBeforeVehicleMusic(Main_Data::game_system->GetCurrentBGM());
+    Main_Data::game_system->BgmPlay(vehicle->GetBGM());
+
+    return true;
 }
 
 bool Game_Player::GetOffVehicle() {
-	assert(!IsDirectionDiagonal(GetDirection()));
-	assert(IsAboard());
+    assert(!IsDirectionDiagonal(GetDirection()));
+    assert(IsAboard());
 
-	auto* vehicle = GetVehicle();
-	if (!vehicle) {
-		return false;
-	}
+    auto* vehicle = GetVehicle();
+    if (!vehicle) {
+        return false;
+    }
 
-	if (InAirship()) {
-		if (vehicle->IsAscendingOrDescending()) {
-			return false;
-		}
+    if (InAirship()) {
+        if (vehicle->IsAscendingOrDescending()) {
+            return false;
+        }
 
-		// Note: RPG_RT ignores the lock_facing flag here!
-		SetFacing(Left);
-		vehicle->StartDescent();
-		return true;
-	}
+        // Note: RPG_RT ignores the lock_facing flag here!
+        SetFacing(Left);
+        vehicle->StartDescent();
+        return true;
+    }
 
-	const auto front_x = Game_Map::XwithDirection(GetX(), GetDirection());
-	const auto front_y = Game_Map::YwithDirection(GetY(), GetDirection());
+    // --- FOOTPRINT AWARE DISEMBARKING ---
+    int min_dx, max_dx, min_dy, max_dy;
+    vehicle->GetTileOffsets(min_dx, max_dx, min_dy, max_dy);
 
-	if (!Game_Map::CanDisembarkShip(*this, front_x, front_y)) {
-		return false;
-	}
+    int dir = GetDirection();
+    int steps = 0;
 
-	vehicle->SetDefaultDirection();
-	data()->aboard = false;
-	SetMoveSpeed(data()->preboard_move_speed);
-	data()->unboarding = true;
+    // Determine how many tiles we need to cross to reach the shore
+    if (dir == Up)         steps = std::abs(min_dy) + 1;
+    else if (dir == Down)  steps = std::abs(max_dy) + 1;
+    else if (dir == Left)  steps = std::abs(min_dx) + 1;
+    else if (dir == Right) steps = std::abs(max_dx) + 1;
 
-	SetThrough(true);
-	Move(GetDirection());
-	ResetThrough();
+    // Calculate target coordinates to validate if land is actually there
+    int target_x = GetX();
+    int target_y = GetY();
+    if (dir == Up)         target_y -= steps;
+    else if (dir == Down)  target_y += steps;
+    else if (dir == Left)  target_x -= steps;
+    else if (dir == Right) target_x += steps;
 
-	data()->vehicle = 0;
-	Main_Data::game_system->BgmPlay(Main_Data::game_system->GetBeforeVehicleMusic());
+    target_x = Game_Map::RoundX(target_x);
+    target_y = Game_Map::RoundY(target_y);
 
-	return true;
+    if (!Game_Map::CanDisembarkShip(*this, target_x, target_y)) {
+        return false;
+    }
+
+    vehicle->SetDefaultDirection();
+    data()->aboard = false; // Hero is now a separate entity from the ship
+    SetMoveSpeed(data()->preboard_move_speed);
+    data()->unboarding = true;
+
+    // DISEMBARKATION LOOP
+    for (int i = 0; i < steps; ++i) {
+        SetThrough(true);
+
+        // If there are multiple steps (large ship), snap coordinates for the internal tiles
+        if (i < steps - 1) {
+            SetX(Game_Map::RoundX(GetX() + GetDxFromDirection(dir)));
+            SetY(Game_Map::RoundY(GetY() + GetDyFromDirection(dir)));
+            // Sync real coordinates to prevent snapping back in pixel-movement mode
+
+        } else {
+            // The final step onto the land tile is an animated Move() call
+            Move(dir);
+        }
+
+        ResetThrough();
+    }
+
+    data()->vehicle = 0;
+    Main_Data::game_system->BgmPlay(Main_Data::game_system->GetBeforeVehicleMusic());
+
+    return true;
 }
 
 void Game_Player::ForceGetOffVehicle() {
-	if (!IsAboard()) {
-		return;
-	}
+    if (!IsAboard()) {
+        return;
+    }
 
-	auto* vehicle = GetVehicle();
-	vehicle->ForceLand();
-	vehicle->SetDefaultDirection();
+    auto* vehicle = GetVehicle();
+    vehicle->ForceLand();
+    vehicle->SetDefaultDirection();
 
-	data()->flying = false;
-	data()->aboard = false;
-	SetMoveSpeed(data()->preboard_move_speed);
-	data()->unboarding = true;
-	data()->vehicle = 0;
-	Main_Data::game_system->BgmPlay(Main_Data::game_system->GetBeforeVehicleMusic());
+    int min_dx, max_dx, min_dy, max_dy;
+    vehicle->GetTileOffsets(min_dx, max_dx, min_dy, max_dy);
+
+    int dir = GetDirection();
+    int steps = 0;
+
+    if (dir == Up)         steps = std::abs(min_dy);
+    else if (dir == Down)  steps = std::abs(max_dy);
+    else if (dir == Left)  steps = std::abs(min_dx);
+    else if (dir == Right) steps = std::abs(max_dx);
+
+    // If the center tile is water, snap the hero to the visual edge of the footprint
+    if (!Game_Map::CanDisembarkShip(*this, GetX(), GetY())) {
+        for (int i = 0; i < steps; ++i) {
+            SetX(Game_Map::RoundX(GetX() + GetDxFromDirection(dir)));
+            SetY(Game_Map::RoundY(GetY() + GetDyFromDirection(dir)));
+        }
+    }
+
+    data()->flying = false;
+    data()->aboard = false;
+    SetMoveSpeed(data()->preboard_move_speed);
+    data()->unboarding = true;
+    data()->vehicle = 0;
+    Main_Data::game_system->BgmPlay(Main_Data::game_system->GetBeforeVehicleMusic());
 }
 
 bool Game_Player::InVehicle() const {

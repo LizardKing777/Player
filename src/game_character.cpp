@@ -1131,92 +1131,186 @@ bool Game_Character::IsInPosition(int x, int y) const {
 	return ((GetX() == x) && (GetY() == y));
 }
 */
+void Game_Character::GetTileOffsets(int& min_dx, int& max_dx, int& min_dy, int& max_dy) const {
+    min_dx = 0;
+    max_dx = 0;
+    min_dy = 0;
+    max_dy = 0;
+
+    if (!_data) {
+        return;
+    }
+
+    std::string_view name = _data->sprite_name;
+    if (name.empty()) {
+        return;
+    }
+
+    // --- X-Axis Parsing: {_#ModeBias} ---
+    size_t x_bracket = name.find("{_");
+    if (x_bracket != std::string_view::npos) {
+        size_t close = name.find("}", x_bracket);
+        if (close != std::string_view::npos) {
+            int width = 0;
+            char bias = '\0';
+            char mode = '\0';
+            std::string_view tag = name.substr(x_bracket + 2, close - (x_bracket + 2));
+            for (size_t i = 0; i < tag.length(); ++i) {
+                char c = tag[i];
+                if (c >= '0' && c <= '9') {
+                    width = width * 10 + (c - '0');
+                } else if (c == 'L' || c == 'l') {
+                    bias = 'L';
+                } else if (c == 'R' || c == 'r') {
+                    bias = 'R';
+                } else if (c == '-' || c == '+') {
+                    mode = c;
+                }
+            }
+            if (width > 0) {
+                if (mode == '-') {
+                    // Exclusive Left: Event is at right-most tile of footprint
+                    min_dx = -(width - 1);
+                    max_dx = 0;
+                } else if (mode == '+') {
+                    // Exclusive Right: Event is at left-most tile of footprint
+                    min_dx = 0;
+                    max_dx = (width - 1);
+                } else {
+                    // Symmetrical or Biased logic
+                    if (width > 1 && width % 2 == 0 && bias == '\0') {
+                        width--;
+                    }
+                    if (width > 1 && width % 2 == 0) {
+                        int r = (width - 1) / 2;
+                        if (bias == 'L') {
+                            min_dx = -(r + 1);
+                            max_dx = r;
+                        } else { // R
+                            min_dx = -r;
+                            max_dx = r + 1;
+                        }
+                    } else {
+                        int r = width / 2;
+                        min_dx = -r;
+                        max_dx = r;
+                    }
+                }
+            }
+        }
+    }
+
+    // --- Y-Axis Parsing: {!#ModeBias} ---
+    size_t y_bracket = name.find("{!");
+    if (y_bracket != std::string_view::npos) {
+        size_t close = name.find("}", y_bracket);
+        if (close != std::string_view::npos) {
+            int height = 0;
+            char bias = '\0';
+            char mode = '\0';
+            std::string_view tag = name.substr(y_bracket + 2, close - (y_bracket + 2));
+            for (size_t i = 0; i < tag.length(); ++i) {
+                char c = tag[i];
+                if (c >= '0' && c <= '9') {
+                    height = height * 10 + (c - '0');
+                } else if (c == 'U' || c == 'u') {
+                    bias = 'U';
+                } else if (c == 'D' || c == 'd') {
+                    bias = 'D';
+                } else if (c == '^' || c == 'v' || c == '=') {
+                    mode = c;
+                }
+            }
+
+            if (mode == '\0') {
+                mode = '^';
+            }
+
+            if (height > 0) {
+                if (mode == '^') {
+                    min_dy = -(height - 1);
+                    max_dy = 0;
+                } else if (mode == 'v') {
+                    min_dy = 0;
+                    max_dy = (height - 1);
+                } else { // Mode '='
+                    if (height > 1 && height % 2 == 0 && bias == '\0') {
+                        height--;
+                    }
+                    if (height > 1 && height % 2 == 0) {
+                        int r = (height - 1) / 2;
+                        if (bias == 'U') {
+                            min_dy = -(r + 1);
+                            max_dy = r;
+                        } else {
+                            min_dy = -r;
+                            max_dy = r + 1;
+                        }
+                    } else {
+                        int r = height / 2;
+                        min_dy = -r;
+                        max_dy = r;
+                    }
+                }
+            }
+        }
+    }
+}
 
 int Game_Character::GetTileWidth() const {
-    std::string_view name = data()->sprite_name;
-    if (name.empty()) {
-        return 1;
-    }
+    int x1, x2, y1, y2;
+    GetTileOffsets(x1, x2, y1, y2);
+    return (x2 - x1) + 1;
+}
 
-    auto bitmap = Cache::Charset(name);
-    if (!bitmap) {
-        return 1;
-    }
-
-    // 1. Physical dimensions
-    int columns = (name[0] == '$') ? 3 : 12;
-    int pixel_frame_width = bitmap->GetWidth() / columns;
-    int pixel_frame_height = bitmap->GetHeight() / 4;
-
-    // 2. Normalize scale (Standard RM character height is 32px)
-    float logical_scale = (float)pixel_frame_height / 32.0f;
-    if (logical_scale <= 0.0f) {
-        return 1;
-    }
-
-    // 3. Logical width (relative to a 320x240 screen)
-    int logical_width = (int)round((float)pixel_frame_width / logical_scale);
-
-    // 4. Threshold Logic
-    const int expansion_threshold = 48;    // Start expanding tiles after 48 logical pixels
-    const int aggressive_threshold = 64;   // Trigger "Aggressive" mode earlier
-
-    if (logical_width < expansion_threshold) {
-        return 1;
-    }
-
-    // 5. Radius Calculation
-    // We calculate how many 16px tiles the footprint extends past the center.
-    int footprint_half = (logical_width - 8) / 2;
-    int radius = (footprint_half - 1) / 16;
-
-    // 6. Aggressive Bonus
-    // If the sprite is wider than 64 logical pixels (like your Demon),
-    // we force one extra tile of collision to each side.
-    if (logical_width > aggressive_threshold) {
-        radius += 1;
-    }
-
-    // Return odd number of tiles: 1 + (radius * 2)
-    // Slime (48px): Base Radius 1 -> 3 tiles wide
-    // Demon (~80px): Base Radius 2 + 1 bonus -> 7 tiles wide
-    return 1 + (radius * 2);
+int Game_Character::GetTileHeight() const {
+    int x1, x2, y1, y2;
+    GetTileOffsets(x1, x2, y1, y2);
+    return (y2 - y1) + 1;
 }
 
 float Game_Character::GetHitboxRadius() const {
-    // Derive the pixel-movement radius from the tile-width for consistency
-    int tiles = GetTileWidth();
-    if (tiles <= 1) {
-        return 0.5f;
-    }
-    return (float)tiles / 2.0f;
+    int x1, x2, y1, y2;
+    GetTileOffsets(x1, x2, y1, y2);
+    float hw = ((x2 - x1) + 1) / 2.0f;
+    float hh = ((y2 - y1) + 1) / 2.0f;
+    return (hw > hh) ? hw : hh;
 }
 
 bool Game_Character::IsInPosition(int x, int y) const {
-    if (GetY() != y) {
+    int x1, x2, y1, y2;
+    GetTileOffsets(x1, x2, y1, y2);
+
+    int left = GetX() + x1;
+    int right = GetX() + x2;
+    int top = GetY() + y1;
+    int bottom = GetY() + y2;
+
+    if (Game_Map::LoopVertical()) {
+        int h = Game_Map::GetTilesY();
+        bool found_y = false;
+        for (int j = top; j <= bottom; ++j) {
+            if (Utils::PositiveModulo(j, h) == y) {
+                found_y = true;
+                break;
+            }
+        }
+        if (!found_y) return false;
+    } else if (y < top || y > bottom) {
         return false;
     }
 
-    int char_width = GetTileWidth();
-    if (char_width <= 1) {
-        return GetX() == x;
-    }
-
-    int radius = char_width / 2;
-    int left_edge = GetX() - radius;
-    int right_edge = GetX() + radius;
-
     if (Game_Map::LoopHorizontal()) {
-        int map_w = Game_Map::GetTilesX();
-        for (int i = left_edge; i <= right_edge; ++i) {
-            if (Utils::PositiveModulo(i, map_w) == x) {
+        int w = Game_Map::GetTilesX();
+        for (int i = left; i <= right; ++i) {
+            if (Utils::PositiveModulo(i, w) == x) {
                 return true;
             }
         }
         return false;
     }
 
-    return x >= left_edge && x <= right_edge;
+    return x >= left && x <= right;
 }
 
 int Game_Character::GetOpacity() const {

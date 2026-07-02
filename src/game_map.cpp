@@ -949,76 +949,109 @@ bool Game_Map::CheckOrMakeWayEx(const Game_Character& self,
         return true;
     }
 
-    int char_width = self.GetTileWidth();
-    int radius = char_width / 2;
+    // Retrieve the full 2D offsets for the moving character
+    int min_dx, max_dx, min_dy, max_dy;
+    self.GetTileOffsets(min_dx, max_dx, min_dy, max_dy);
 
     const auto vehicle_type = GetCollisionVehicleType(&self);
 
-    for (int dx = -radius; dx <= radius; ++dx) {
-        int cur_from_x = from_x + dx;
-        int cur_to_x = to_x + dx;
+    // Iterate through every tile in the footprint (Width x Height)
+    for (int dy = min_dy; dy <= max_dy; ++dy) {
+        for (int dx = min_dx; dx <= max_dx; ++dx) {
+            // Calculate coordinates for this specific segment of the footprint
+            int cur_from_x = from_x + dx;
+            int cur_from_y = from_y + dy;
+            int cur_to_x = to_x + dx;
+            int cur_to_y = to_y + dy;
 
-        const int bit_from = GetPassableMask(cur_from_x, from_y, cur_to_x, to_y);
-        const int bit_to = GetPassableMask(cur_to_x, to_y, cur_from_x, from_y);
+            // Infer directions for this specific segment
+            const int bit_from = GetPassableMask(cur_from_x, cur_from_y, cur_to_x, cur_to_y);
+            const int bit_to = GetPassableMask(cur_to_x, cur_to_y, cur_from_x, cur_from_y);
 
-        int tile_from_x = Game_Map::RoundX(cur_from_x);
-        int tile_from_y = Game_Map::RoundY(from_y);
-        int tile_to_x = Game_Map::RoundX(cur_to_x);
-        int tile_to_y = Game_Map::RoundY(to_y);
+            // Round coordinates for looping maps
+            int tile_from_x = Game_Map::RoundX(cur_from_x);
+            int tile_from_y = Game_Map::RoundY(cur_from_y);
+            int tile_to_x = Game_Map::RoundX(cur_to_x);
+            int tile_to_y = Game_Map::RoundY(to_y + dy);
 
-        if (!Game_Map::IsValid(tile_to_x, tile_to_y)) {
-            return false;
-        }
-
-        bool self_conflict = false;
-        if (!self.IsJumping() && self.GetLayer() == lcf::rpg::EventPage::Layers_same && self.GetTileId() != 0) {
-            int tile_id = self.GetTileId();
-            if ((passages_up[tile_id] & bit_from) == 0) {
-                self_conflict = true;
+            // Fail if any segment of the expanded box moves out of bounds
+            if (!Game_Map::IsValid(tile_to_x, tile_to_y)) {
+                return false;
             }
-        }
 
-        auto CheckOrMakeCollideEvent = [&](auto& other) {
-            if (make_way) {
-                return MakeWayCollideEvent(tile_to_x, tile_to_y, self, other, self_conflict);
-            } else {
-                return CheckWayTestCollideEvent(tile_to_x, tile_to_y, self, other, self_conflict);
-            }
-        };
+            bool self_conflict = false;
 
-        if (!self.IsJumping()) {
-            if (vehicle_type == Game_Vehicle::None) {
-                if (!IsPassableTile(&self, bit_from, tile_from_x, tile_from_y, false, true)) {
-                    return false;
+            // Check for self conflict for this segment (event using a tile graphic)
+            if (!self.IsJumping() && self.GetLayer() == lcf::rpg::EventPage::Layers_below && self.GetTileId() != 0) {
+                int tile_id = self.GetTileId();
+                if ((passages_up[tile_id] & bit_from) == 0) {
+                    self_conflict = true;
                 }
             }
-        }
 
-        int bit_onto = self.IsJumping() ? Passable::Down : bit_to;
-        if (!IsPassableTile(&self, bit_onto, tile_to_x, tile_to_y, false, true)) {
-            return false;
-        }
+            // Helper for checking collisions with other entities for this segment
+            auto CheckOrMakeCollideEvent = [&](auto& other) {
+                if (make_way) {
+                    return MakeWayCollideEvent(tile_to_x, tile_to_y, self, other, self_conflict);
+                } else {
+                    return CheckWayTestCollideEvent(tile_to_x, tile_to_y, self, other, self_conflict);
+                }
+            };
 
-        if (vehicle_type != Game_Vehicle::Airship && check_events_and_vehicles) {
-            for (auto& other : GetEvents()) {
-                if (!ignore_some_events_by_id.empty() && std::find(ignore_some_events_by_id.begin(), ignore_some_events_by_id.end(), other.GetId()) != ignore_some_events_by_id.end())
-                    continue;
-                if (CheckOrMakeCollideEvent(other)) return false;
+            // 1. Check Map Passability (Environment/Terrain/Vehicles)
+            if (!self.IsJumping()) {
+                if (vehicle_type == Game_Vehicle::None) {
+                    // Check if character can step OFF its current tile
+                    // Passing check_events_and_vehicles ensures specific vehicle terrain rules are applied
+                    if (!IsPassableTile(&self, bit_from, tile_from_x, tile_from_y, check_events_and_vehicles, true)) {
+                        return false;
+                    }
+                }
             }
 
-            auto& player = Main_Data::game_player;
-            if (player->GetVehicleType() == Game_Vehicle::None) {
-                if (CheckOrMakeCollideEvent(*Main_Data::game_player)) return false;
+            // Check if character can step ONTO its target tile
+            int bit_onto = self.IsJumping() ? Passable::Down : bit_to;
+            // FIX: Passing check_events_and_vehicles here restores Boat/Ship/Airship terrain restrictions
+            if (!IsPassableTile(&self, bit_onto, tile_to_x, tile_to_y, check_events_and_vehicles, true)) {
+                return false;
             }
 
-            for (auto vid : { Game_Vehicle::Boat, Game_Vehicle::Ship }) {
-                auto& other = vehicles[vid - 1];
-                if (other.IsInCurrentMap() && CheckOrMakeCollideEvent(other)) return false;
-            }
+            // 2. Check Entity Collisions (Explicitly for expanded width)
+            if (vehicle_type != Game_Vehicle::Airship && check_events_and_vehicles) {
+                // Check collisions with all Map Events
+                for (auto& other : GetEvents()) {
+                    if (!ignore_some_events_by_id.empty() && std::find(ignore_some_events_by_id.begin(), ignore_some_events_by_id.end(), other.GetId()) != ignore_some_events_by_id.end())
+                        continue;
+                    if (CheckOrMakeCollideEvent(other)) {
+                        return false;
+                    }
+                }
 
-            auto& airship = vehicles[Game_Vehicle::Airship - 1];
-            if (airship.IsInCurrentMap() && self.GetType() != Game_Character::Player) {
-                if (CheckOrMakeCollideEvent(airship)) return false;
+                // Check collision with Player
+                auto& player = Main_Data::game_player;
+                if (player->GetVehicleType() == Game_Vehicle::None) {
+                    if (CheckOrMakeCollideEvent(*Main_Data::game_player)) {
+                        return false;
+                    }
+                }
+
+                // Check collision with Boats/Ships
+                for (auto vid : { Game_Vehicle::Boat, Game_Vehicle::Ship }) {
+                    auto& other = vehicles[vid - 1];
+                    if (other.IsInCurrentMap()) {
+                        if (CheckOrMakeCollideEvent(other)) {
+                            return false;
+                        }
+                    }
+                }
+
+                // Check collision with Airship
+                auto& airship = vehicles[Game_Vehicle::Airship - 1];
+                if (airship.IsInCurrentMap() && self.GetType() != Game_Character::Player) {
+                    if (CheckOrMakeCollideEvent(airship)) {
+                        return false;
+                    }
+                }
             }
         }
     }

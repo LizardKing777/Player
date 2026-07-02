@@ -819,7 +819,12 @@ public:
 	virtual bool IsInPosition(int x, int y) const;
 
     int GetTileWidth() const;
+    int GetTileHeight() const;
     float GetHitboxRadius() const;
+
+    void GetTileOffsets(int& min_dx, int& max_dx, int& min_dy, int& max_dy) const;
+    float GetHitboxCenterX() const;
+    float GetHitboxCenterY() const;
 
 
 	/**
