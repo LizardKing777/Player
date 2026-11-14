@@ -54,6 +54,36 @@ void Sprite_Character::Draw(Bitmap &dst) {
 	SetBushDepth(bush_split > 3 ? 0 : GetHeight() / bush_split);
 
 	Sprite::Draw(dst);
+
+	// --- DEBUG COLLISION BOX OVERLAY ---
+	if (character && character->IsCollisionDebugEnabled()) {
+		int min_dx, max_dx, min_dy, max_dy;
+		character->GetTileOffsets(min_dx, max_dx, min_dy, max_dy);
+
+		// 1. Calculate pixel dimensions of the multi-tile box
+		int box_w = (max_dx - min_dx + 1) * TILE_SIZE;
+		int box_h = (max_dy - min_dy + 1) * TILE_SIZE;
+
+		// 2. Base screen coordinates from the character
+		int screen_x = character->GetScreenX() - (TILE_SIZE / 2) + (min_dx * TILE_SIZE);
+		int screen_y = character->GetScreenY() - (TILE_SIZE / 2) + (min_dy * TILE_SIZE);
+
+		// 3. Shift up by the multi-tile span adjustment
+		int vertical_tile_span = (max_dy - min_dy + 1);
+		screen_y -= (vertical_tile_span - 1) * TILE_SIZE;
+
+		// 4. Subtract the 8-pixel character rendering half-tile offset anchor discrepancy
+		screen_y -= (TILE_SIZE / 2);
+
+		Rect box_rect(screen_x, screen_y, box_w, box_h);
+
+		// Draw translucent red interior and solid white border outline
+		dst.FillRect(box_rect, Color(255, 0, 0, 80));
+		dst.FillRect(Rect(box_rect.x, box_rect.y, box_rect.width, 1), Color(255, 255, 255, 255)); // Top
+		dst.FillRect(Rect(box_rect.x, box_rect.y + box_rect.height - 1, box_rect.width, 1), Color(255, 255, 255, 255)); // Bottom
+		dst.FillRect(Rect(box_rect.x, box_rect.y, 1, box_rect.height), Color(255, 255, 255, 255)); // Left
+		dst.FillRect(Rect(box_rect.x + box_rect.width - 1, box_rect.y, 1, box_rect.height), Color(255, 255, 255, 255)); // Right
+	}
 }
 
 void Sprite_Character::Update() {

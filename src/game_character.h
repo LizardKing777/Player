@@ -839,6 +839,9 @@ public:
 	void SetCustomHitbox(int width, int height, int x_bias, int y_bias) {
 		custom_hitbox = {width, height, x_bias, y_bias};
 	}
+	/** Display an event's hitbox at runtime */
+	bool IsCollisionDebugEnabled() const { return debug_collision_box; }
+	void SetCollisionDebugEnabled(bool enabled) { debug_collision_box = enabled; }
 
 	/**
 	 * Tests if the character is currently on the tile at x/y or moving
@@ -980,6 +983,7 @@ protected:
 	bool BeginMoveRouteJump(int32_t& current_index, const lcf::rpg::MoveRoute& current_route);
 
 	CustomHitbox custom_hitbox = {0, 0, 0, 0};
+	bool debug_collision_box = false;
 
 	lcf::rpg::SaveMapEventBase* data();
 	const lcf::rpg::SaveMapEventBase* data() const;

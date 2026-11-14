@@ -137,6 +137,24 @@ static bool EasyResetCollision(dyn_arg_list args, Game_Interpreter* interpreter)
 	return true;
 }
 
+static bool EasyShowCollision(dyn_arg_list args, Game_Interpreter* interpreter) {
+	int event_id = atoi(args[0].c_str());
+	Game_Character* chara = interpreter->GetCharacter(event_id, "easyrpg_show_collision");
+	if (chara) {
+		chara->SetCollisionDebugEnabled(true);
+	}
+	return true;
+}
+
+static bool EasyHideCollision(dyn_arg_list args, Game_Interpreter* interpreter) {
+	int event_id = atoi(args[0].c_str());
+	Game_Character* chara = interpreter->GetCharacter(event_id, "easyrpg_hide_collision");
+	if (chara) {
+		chara->SetCollisionDebugEnabled(false);
+	}
+	return true;
+}
+
 bool DynRpg::EasyRpgPlugin::Invoke(std::string_view func, dyn_arg_list args, bool& do_yield, Game_Interpreter* interpreter) {
 	if (func == "call") {
 		return EasyCall(args, do_yield, interpreter);
@@ -148,6 +166,10 @@ bool DynRpg::EasyRpgPlugin::Invoke(std::string_view func, dyn_arg_list args, boo
 		return EasySetCollision(args, interpreter);
 	} else if (func == "easyrpg_reset_collision") {
 		return EasyResetCollision(args, interpreter);
+	} else if (func == "easyrpg_show_collision") {
+		return EasyShowCollision(args, interpreter);
+	} else if (func == "easyrpg_hide_collision") {
+		return EasyHideCollision(args, interpreter);
 	}
 	return false;
 }
