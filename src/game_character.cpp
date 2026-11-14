@@ -1258,6 +1258,41 @@ void Game_Character::UpdateFacing() {
 }
 
 void Game_Character::GetTileOffsets(int& min_dx, int& max_dx, int& min_dy, int& max_dy) const {
+	// 1. Runtime Override Logic
+	if (custom_hitbox.width > 0 || custom_hitbox.height > 0) {
+
+		// --- X-AXIS BIAS LOGIC ---
+		int w = custom_hitbox.width;
+		if (custom_hitbox.x_bias == 1) { // LEFT (e.g., width 3: [-2, 0])
+			min_dx = -(w - 1);
+			max_dx = 0;
+		} else if (custom_hitbox.x_bias == 2) { // RIGHT (e.g., width 3: [0, 2])
+			min_dx = 0;
+			max_dx = (w - 1);
+		} else { // CENTER (e.g., width 3: [-1, 1])
+			int r = w / 2;
+			min_dx = -r;
+			max_dx = (w % 2 == 0) ? r - 1 : r;
+		}
+
+		// --- Y-AXIS BIAS LOGIC (Completely separate from X) ---
+		int h = custom_hitbox.height;
+		if (custom_hitbox.y_bias == 1) { // UP (e.g., height 2: [-1, 0])
+			min_dy = -(h - 1);
+			max_dy = 0;
+		} else if (custom_hitbox.y_bias == 2) { // DOWN (e.g., height 2: [0, 1])
+			min_dy = 0;
+			max_dy = (h - 1);
+		} else { // CENTER (e.g., height 2: [-1, 0])
+			int r = h / 2;
+			min_dy = -r;
+			max_dy = (h % 2 == 0) ? r - 1 : r;
+		}
+		return;
+	}
+
+	// 2. Fallback to filename tag parsing
+
 	min_dx = 0;
 	max_dx = 0;
 	min_dy = 0;

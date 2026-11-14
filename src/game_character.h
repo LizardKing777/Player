@@ -24,6 +24,7 @@
 #include <unordered_set>
 #include "color.h"
 #include "flash.h"
+#include "game_interpreter.h"
 #include <lcf/rpg/moveroute.h>
 #include <lcf/rpg/eventpage.h>
 #include <lcf/rpg/savemapeventbase.h>
@@ -829,6 +830,16 @@ public:
 	/** Returns the absolute Y center of the expanded hitbox in logical units. */
 	float GetHitboxCenterY() const;
 
+	/** Change an event's hitbox at runtime */
+	struct CustomHitbox {
+	int width = 0, height = 0;
+	int x_bias = 0, y_bias = 0; // 0=Center, 1=Left/Up, 2=Right/Down
+	};
+
+	void SetCustomHitbox(int width, int height, int x_bias, int y_bias) {
+		custom_hitbox = {width, height, x_bias, y_bias};
+	}
+
 	/**
 	 * Tests if the character is currently on the tile at x/y or moving
 	 * towards it.
@@ -967,6 +978,8 @@ protected:
 	void IncAnimFrame();
 	void UpdateFlash();
 	bool BeginMoveRouteJump(int32_t& current_index, const lcf::rpg::MoveRoute& current_route);
+
+	CustomHitbox custom_hitbox = {0, 0, 0, 0};
 
 	lcf::rpg::SaveMapEventBase* data();
 	const lcf::rpg::SaveMapEventBase* data() const;
