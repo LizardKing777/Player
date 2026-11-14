@@ -60,20 +60,17 @@ void Sprite_Character::Draw(Bitmap &dst) {
 		int min_dx, max_dx, min_dy, max_dy;
 		character->GetTileOffsets(min_dx, max_dx, min_dy, max_dy);
 
-		// 1. Calculate pixel dimensions of the multi-tile box
 		int box_w = (max_dx - min_dx + 1) * TILE_SIZE;
 		int box_h = (max_dy - min_dy + 1) * TILE_SIZE;
 
-		// 2. Base screen coordinates from the character
-		int screen_x = character->GetScreenX() - (TILE_SIZE / 2) + (min_dx * TILE_SIZE);
-		int screen_y = character->GetScreenY() - (TILE_SIZE / 2) + (min_dy * TILE_SIZE);
+		// character->GetScreenX() and character->GetScreenY() align to the bottom-center of the base tile (16x16).
+		// Bottom-center minus (TILE_SIZE / 2, TILE_SIZE) gives the top-left corner of the base tile.
+		int base_tile_screen_x = character->GetScreenX() - (TILE_SIZE / 2);
+		int base_tile_screen_y = character->GetScreenY() - TILE_SIZE;
 
-		// 3. Shift up by the multi-tile span adjustment
-		int vertical_tile_span = (max_dy - min_dy + 1);
-		screen_y -= (vertical_tile_span - 1) * TILE_SIZE;
-
-		// 4. Subtract the 8-pixel character rendering half-tile offset anchor discrepancy
-		screen_y -= (TILE_SIZE / 2);
+		// Add min offsets directly
+		int screen_x = base_tile_screen_x + (min_dx * TILE_SIZE);
+		int screen_y = base_tile_screen_y + (min_dy * TILE_SIZE);
 
 		Rect box_rect(screen_x, screen_y, box_w, box_h);
 
