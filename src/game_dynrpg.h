@@ -133,6 +133,7 @@ public:
 	void Update();
 	void Load(int slot);
 	void Save(int slot);
+	void OnBattleStart();
 
 private:
 	friend DynRpg::EasyRpgPlugin;
@@ -163,6 +164,7 @@ public:
 	virtual void Update() {}
 	virtual void Load(const std::vector<uint8_t>&) {}
 	virtual std::vector<uint8_t> Save() { return {}; }
+	virtual void OnBattleStart() {}
 
 protected:
 	Game_DynRpg& instance;

@@ -30,6 +30,7 @@
 
 #include "dynrpg_easyrpg.h"
 #include "dynrpg_textplugin.h"
+#include "dynrpg_battlerchange.h"
 
 enum DynRpg_ParseMode {
 	ParseMode_Function,
@@ -185,6 +186,9 @@ void Game_DynRpg::InitPlugins() {
 
 	if (Player::IsPatchDynRpg()) {
 		plugins.emplace_back(new DynRpg::TextPlugin(*this));
+	}
+	if (Player::IsPatchDynRpg()) {
+		plugins.emplace_back(new DynRpg::BattlerChange(*this));
 	}
 
 	plugins_loaded = true;
@@ -515,5 +519,12 @@ void Game_DynRpg::Save(int slot) {
 void Game_DynRpg::Update() {
 	for (auto& plugin : plugins) {
 		plugin->Update();
+	}
+}
+
+void Game_DynRpg::OnBattleStart() {
+	InitPlugins();
+	for (auto& plugin : plugins) {
+		plugin->OnBattleStart();
 	}
 }

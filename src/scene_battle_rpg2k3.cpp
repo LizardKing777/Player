@@ -50,6 +50,7 @@
 #include <memory>
 #include "feature.h"
 #include "game_message_terms.h"
+#include "game_dynrpg.h"
 
 //#define EP_DEBUG_BATTLE2K3_STATE_MACHINE
 
@@ -61,10 +62,6 @@ Scene_Battle_Rpg2k3::Scene_Battle_Rpg2k3(const BattleArgs& args) :
 
 void Scene_Battle_Rpg2k3::Start() {
 	Scene_Battle::Start();
-	if (!Game_Battle::IsBattleRunning()) {
-		// Invalid troop, battle was already ended
-		return;
-	}
 	Game_Interpreter_Battle::InitBattle();
 	InitBattleCondition(Game_Battle::GetBattleCondition());
 	CreateEnemySprites();
@@ -79,6 +76,10 @@ void Scene_Battle_Rpg2k3::Start2() {
 	InitActors();
 	InitAtbGauges();
 
+	if (Main_Data::game_dynrpg) {
+		Main_Data::game_dynrpg->OnBattleStart();
+	}
+	RefreshTargetWindow();
 	// Changed enemy place means we need to recompute Z order
 	ResetAllBattlerZ();
 }
