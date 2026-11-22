@@ -6,6 +6,7 @@
 #include "game_enemy.h"
 #include "game_enemyparty.h"
 #include "main_data.h"
+#include "output.h"
 
 #include <array>
 #include <string>
@@ -20,7 +21,7 @@ DynRpg::AnimatedMonsters::AnimatedMonsters(Game_DynRpg& instance) :
 }
 
 DynRpg::AnimatedMonsters::~AnimatedMonsters() {
-	ClearBattle();
+	OnBattleEnd();
 }
 
 bool DynRpg::AnimatedMonsters::Invoke(std::string_view, dyn_arg_list, bool&, Game_Interpreter*) {
@@ -32,13 +33,14 @@ void DynRpg::AnimatedMonsters::InitMonster(MonsterState& state, const Game_Enemy
 	state.name = ToString(enemy.GetName());
 	state.hue = enemy.GetHue();
 	state.old_hp = enemy.GetHp();
-	state.pose_index = index % 4;
+	state.old_blink_timer = enemy.GetBlinkTimer();
+	state.idle_step = index % 4;
+	state.pose_index = state.idle_step;
 
 	if (state.name.empty()) {
 		return;
 	}
 
-	// Check once per monster (at battle start or Transform) if Monster/<Name>/1 exists
 	std::string first_pose = FileFinder::MakePath(state.name, "1");
 	if (FileFinder::FindImage("Monster", first_pose).empty()) {
 		return;
@@ -65,7 +67,6 @@ void DynRpg::AnimatedMonsters::OnPoseReady(FileRequestResult* result, int monste
 		return;
 	}
 
-	// If the requested pose doesn't exist, leave poses[pose_idx] null to fall back cleanly
 	if (FileFinder::FindImage("Monster", result->file).empty()) {
 		return;
 	}
@@ -81,8 +82,8 @@ void DynRpg::AnimatedMonsters::OnPoseReady(FileRequestResult* result, int monste
 	state.poses[pose_idx] = std::move(graphic);
 }
 
-void DynRpg::AnimatedMonsters::InitBattle() {
-	ClearBattle();
+void DynRpg::AnimatedMonsters::OnBattleStart() {
+	OnBattleEnd();
 
 	const auto& enemies = Main_Data::game_enemyparty->GetEnemies();
 	monsters.resize(enemies.size());
@@ -95,7 +96,7 @@ void DynRpg::AnimatedMonsters::InitBattle() {
 	in_battle = true;
 }
 
-void DynRpg::AnimatedMonsters::ClearBattle() {
+void DynRpg::AnimatedMonsters::OnBattleEnd() {
 	monsters.clear();
 	frame_timer = 0;
 	in_battle = false;
@@ -104,19 +105,19 @@ void DynRpg::AnimatedMonsters::ClearBattle() {
 void DynRpg::AnimatedMonsters::Update() {
 	if (!Game_Battle::IsBattleRunning()) {
 		if (in_battle) {
-			ClearBattle();
+			OnBattleEnd();
 		}
 		return;
 	}
 
 	if (!in_battle) {
-		InitBattle();
+		OnBattleStart();
 		return;
 	}
 
 	const auto& enemies = Main_Data::game_enemyparty->GetEnemies();
 	if (monsters.size() != enemies.size()) {
-		InitBattle();
+		OnBattleStart();
 		return;
 	}
 
@@ -124,9 +125,7 @@ void DynRpg::AnimatedMonsters::Update() {
 	if (frame_timer > 10) {
 		frame_timer = 0;
 		for (auto& state : monsters) {
-			if (state.hurt_timer == 0) {
-				state.pose_index = (state.pose_index + 1) % 4;
-			}
+			state.idle_step = (state.idle_step + 1) % 4;
 		}
 	}
 
@@ -144,21 +143,35 @@ void DynRpg::AnimatedMonsters::Update() {
 			continue;
 		}
 
+		// RM2k mode calls SetBlinkTimer() during the damage message before ApplyHpEffect()
+		// reduces HP. Trigger hurt_timer immediately on a new blink so it syncs with the hit.
+		int bt = enemy->GetBlinkTimer();
+		if (bt > state.old_blink_timer) {
+			state.hurt_timer = 30;
+			state.hurt_triggered_by_blink = true;
+		} else if (bt == 0) {
+			state.hurt_triggered_by_blink = false;
+		}
+		state.old_blink_timer = bt;
+
 		int hp = enemy->GetHp();
 		if (hp < state.old_hp) {
-			state.hurt_timer = 30;
+			if (!state.hurt_triggered_by_blink) {
+				state.hurt_timer = 30;
+			}
+			state.hurt_triggered_by_blink = false;
 			state.old_hp = hp;
 		} else if (hp > state.old_hp) {
 			state.old_hp = hp;
 		}
 
-		if (state.hurt_timer > 0) {
-			state.pose_index = 5 + ((state.hurt_timer - 1) / 5) % 2;
-			--state.hurt_timer;
-		}
-
 		if (hp <= 0) {
 			state.pose_index = 4;
+		} else if (state.hurt_timer > 0) {
+			state.pose_index = 5 + ((state.hurt_timer - 1) / 5) % 2;
+			--state.hurt_timer;
+		} else {
+			state.pose_index = state.idle_step;
 		}
 	}
 }
@@ -183,6 +196,5 @@ BitmapRef DynRpg::AnimatedMonsters::GetMonsterBitmap(const Game_Enemy& enemy) co
 		return state.poses[file_idx];
 	}
 
-	// Fallback to 1.png if a specific pose image (e.g. 4.png or 6.png) is missing
 	return state.poses[0];
 }

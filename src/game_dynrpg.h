@@ -141,6 +141,8 @@ public:
 	void Load(int slot);
 	void Save(int slot);
 	BitmapRef GetAnimatedMonsterBitmap(const Game_Enemy& enemy) const;
+	void OnBattleStart();
+	void OnBattleEnd();
 
 private:
 	friend DynRpg::EasyRpgPlugin;
@@ -173,6 +175,8 @@ public:
 	virtual void Update() {}
 	virtual void Load(const std::vector<uint8_t>&) {}
 	virtual std::vector<uint8_t> Save() { return {}; }
+	virtual void OnBattleStart() {}
+	virtual void OnBattleEnd() {}
 
 protected:
 	Game_DynRpg& instance;

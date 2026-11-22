@@ -74,6 +74,8 @@ void Game_Battle::Init(int troop_id) {
 
 	interpreter.reset(new Game_Interpreter_Battle(troop->pages));
 	spriteset.reset(new Spriteset_Battle(background_name, terrain_id));
+	Main_Data::game_dynrpg->OnBattleStart();
+
 	spriteset->Update();
 	animation_actors.reset();
 	animation_enemies.reset();
@@ -95,6 +97,8 @@ void Game_Battle::Quit() {
 	animation_enemies.reset();
 
 	Game_Battle::battle_running = false;
+	Main_Data::game_dynrpg->OnBattleEnd();
+
 	terrain_id = 0;
 
 	std::vector<Game_Battler*> allies;

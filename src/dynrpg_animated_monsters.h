@@ -20,6 +20,8 @@ public:
 
 	bool Invoke(std::string_view func, dyn_arg_list args, bool& do_yield, Game_Interpreter* interpreter) override;
 	void Update() override;
+	void OnBattleStart() override;
+	void OnBattleEnd() override;
 
 	BitmapRef GetMonsterBitmap(const Game_Enemy& enemy) const;
 
@@ -31,15 +33,16 @@ private:
 		int hue = 0;
 		bool animated = false;
 		int old_hp = 0;
+		int old_blink_timer = 0;
 		int hurt_timer = 0;
+		bool hurt_triggered_by_blink = false;
+		int idle_step = 0;
 		int pose_index = 0;
 		std::array<BitmapRef, num_pose_files> poses;
 		std::array<FileRequestBinding, num_pose_files> requests;
 	};
 
-	void InitBattle();
 	void InitMonster(MonsterState& state, const Game_Enemy& enemy, int index);
-	void ClearBattle();
 	void OnPoseReady(FileRequestResult* result, int monster_idx, int pose_idx, int hue);
 
 	std::vector<MonsterState> monsters;

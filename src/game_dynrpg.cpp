@@ -531,3 +531,17 @@ BitmapRef Game_DynRpg::GetAnimatedMonsterBitmap(const Game_Enemy& enemy) const {
 	}
 	return nullptr;
 }
+
+void Game_DynRpg::OnBattleStart() {
+	InitPlugins();
+
+	for (auto& plugin : plugins) {
+		plugin->OnBattleStart();
+	}
+}
+
+void Game_DynRpg::OnBattleEnd() {
+	for (auto& plugin : plugins) {
+		plugin->OnBattleEnd();
+	}
+}
