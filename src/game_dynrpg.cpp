@@ -30,6 +30,7 @@
 
 #include "dynrpg_easyrpg.h"
 #include "dynrpg_textplugin.h"
+#include "dynrpg_animated_monsters.h"
 
 enum DynRpg_ParseMode {
 	ParseMode_Function,
@@ -185,6 +186,11 @@ void Game_DynRpg::InitPlugins() {
 
 	if (Player::IsPatchDynRpg()) {
 		plugins.emplace_back(new DynRpg::TextPlugin(*this));
+	}
+	if (Player::IsPatchDynRpg()) {
+	auto anim = std::make_unique<DynRpg::AnimatedMonsters>(*this);
+	animated_monsters = anim.get();
+	plugins.push_back(std::move(anim));
 	}
 
 	plugins_loaded = true;
@@ -513,7 +519,15 @@ void Game_DynRpg::Save(int slot) {
 }
 
 void Game_DynRpg::Update() {
+	InitPlugins();
 	for (auto& plugin : plugins) {
 		plugin->Update();
 	}
+}
+
+BitmapRef Game_DynRpg::GetAnimatedMonsterBitmap(const Game_Enemy& enemy) const {
+	if (animated_monsters) {
+		return animated_monsters->GetMonsterBitmap(enemy);
+	}
+	return nullptr;
 }

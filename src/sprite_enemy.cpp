@@ -28,6 +28,7 @@
 #include "output.h"
 #include "feature.h"
 #include "game_battle.h"
+#include "game_dynrpg.h"
 
 Sprite_Enemy::Sprite_Enemy(Game_Enemy* enemy)
 	: Sprite_Battler(enemy, enemy->GetTroopMemberId())
@@ -130,6 +131,22 @@ void Sprite_Enemy::Draw(Bitmap& dst) {
 		SetFixedFlipX();
 	} else {
 		SetFlipX(enemy->IsDirectionFlipped());
+	}
+
+	if (Main_Data::game_dynrpg) {
+		if (auto anim_bmp = Main_Data::game_dynrpg->GetAnimatedMonsterBitmap(*enemy)) {
+			if (GetBitmap() != anim_bmp) {
+				SetBitmap(anim_bmp);
+				SetOx(anim_bmp->GetWidth() / 2);
+				SetOy(anim_bmp->GetHeight() / 2);
+				ResetZ();
+			}
+		} else if (graphic && GetBitmap() != graphic) {
+			SetBitmap(graphic);
+			SetOx(graphic->GetWidth() / 2);
+			SetOy(graphic->GetHeight() / 2);
+			ResetZ();
+		}
 	}
 
 	Sprite_Battler::Draw(dst);

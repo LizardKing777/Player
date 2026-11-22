@@ -48,6 +48,9 @@
 #include "enemyai.h"
 #include "feature.h"
 
+#include "game_dynrpg.h"
+
+
 Scene_Battle::Scene_Battle(const BattleArgs& args)
 	: troop_id(args.troop_id),
 	allow_escape(args.allow_escape),
@@ -255,6 +258,10 @@ void Scene_Battle::UpdateBattlers() {
 	for (auto* b : battlers) {
 		b->UpdateBattle();
 	}
+	if (Main_Data::game_dynrpg) {
+		Main_Data::game_dynrpg->Update();
+	}
+
 	Game_Battle::UpdateAnimation();
 }
 

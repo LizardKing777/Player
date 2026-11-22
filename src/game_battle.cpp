@@ -37,6 +37,8 @@
 #include "utils.h"
 #include "rand.h"
 
+#include "game_dynrpg.h"
+
 namespace Game_Battle {
 	const lcf::rpg::Troop* troop = nullptr;
 
@@ -102,6 +104,10 @@ void Game_Battle::Quit() {
 	for (std::vector<Game_Battler*>::iterator it = allies.begin(); it != allies.end(); it++) {
 		(*it)->RemoveBattleStates();
 		(*it)->SetBattleAlgorithm(BattleAlgorithmRef());
+	}
+
+	if (Main_Data::game_dynrpg) {
+		Main_Data::game_dynrpg->Update();
 	}
 
 	Main_Data::game_actors->ResetBattle();

@@ -27,10 +27,17 @@
 #include <unordered_map>
 #include "output.h"
 #include "utils.h"
+#include "memory_management.h"
 
 // Headers
 namespace lcf::rpg {
 	class EventCommand;
+}
+
+class Game_Enemy;
+
+namespace DynRpg {
+class AnimatedMonsters;
 }
 
 class DynRpgPlugin;
@@ -133,6 +140,7 @@ public:
 	void Update();
 	void Load(int slot);
 	void Save(int slot);
+	BitmapRef GetAnimatedMonsterBitmap(const Game_Enemy& enemy) const;
 
 private:
 	friend DynRpg::EasyRpgPlugin;
@@ -149,6 +157,8 @@ private:
 
 	// DynRpg Function table
 	dyn_rpg_func dyn_rpg_functions;
+
+	DynRpg::AnimatedMonsters* animated_monsters = nullptr;
 };
 
 /** Base class for implementing a DynRpg Plugins */
